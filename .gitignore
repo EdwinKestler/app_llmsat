@@ -11,3 +11,5 @@ output/
 .conda/
 gee_auth/
 .env
+*.pyc
+__pycache__/

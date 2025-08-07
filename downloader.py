@@ -23,12 +23,13 @@ def download_imagery(config: PipelineConfig, *, source: str = "Satellite") -> st
         Path to the downloaded GeoTIFF.
     """
     os.makedirs(config.out_dir, exist_ok=True)
-    image_path = os.path.join(config.out_dir, "image.tif")
+    image_path = os.path.join(config.out_dir, "s2harm_rgb_saa.tif")
     tms_to_geotiff(
         output=image_path,
         bbox=config.bbox,
         zoom=config.zoom,
         source=source,
         overwrite=True,
+        crs="EPSG:4326"  # Explicitly set CRS
     )
     return image_path
