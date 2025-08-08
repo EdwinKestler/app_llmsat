@@ -1,18 +1,41 @@
-# this is the gitinore file for the project
-chekpoints/
-checkpoints/
-data/
-*.pth
-*.tif
-*.pt
-EsriCache/
-output/
-.venv/
-.conda/
-gee_auth/
-.env
-*.pyc
-__pycache__/
+# This is a new file app_stremlit/.gitignore
 
-old_files/
-*.gpkg
+# Environment variables and sensitive files
+.env
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Streamlit secrets
+.secrets/
+secrets.toml
+
+# Output directories from pipeline
+output/
+data/
+
+# Model checkpoints
+checkpoints/*
+!checkpoints/.gitkeep  # Keep empty checkpoints directory if needed
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# OS-specific files
+.DS_Store
+Thumbs.db
