@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from samgeo import tms_to_geotiff
+from samgeo_stub import tms_to_geotiff
 from pipeline.config import PipelineConfig
 
 

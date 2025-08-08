@@ -4,7 +4,7 @@ import rasterio
 import hashlib
 from rasterio.transform import from_bounds
 from rasterio.crs import CRS
-from samgeo import SamGeo, tms_to_geotiff
+from samgeo_stub import SamGeo, tms_to_geotiff
 
 # === CONFIGURACIÓN ===
 bbox = [-90.015147, 14.916566, -90.010159, 14.919471]  # [west, south, east, north]

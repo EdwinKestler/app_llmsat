@@ -5,7 +5,7 @@ import hashlib
 from datetime import datetime
 from rasterio.transform import from_bounds
 from rasterio.crs import CRS
-from samgeo import SamGeo, tms_to_geotiff, get_basemaps
+from samgeo_stub import SamGeo, tms_to_geotiff, get_basemaps
 import leafmap  # ✅ se usa leafmap, no Map de samgeo
 
 # === CONFIGURACIÓN ===

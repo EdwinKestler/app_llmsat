@@ -1,162 +1,108 @@
-# Modified file app_stremlit/nl_query/openai_handler.py
-from dataclasses import dataclass
-import json
+# app_stremlit/nl_query/openai_handler.py
+from __future__ import annotations
 import os
 from pathlib import Path
-from typing import Iterable, Dict, List, Tuple, Optional
+from typing import Iterable, List, Optional, Tuple
 
 import geopandas as gpd
 import pandas as pd
-import altair as alt
 
-from pipeline.config import PipelineConfig, load_config  # Updated import at line ~23
+from pipeline.config import PipelineConfig, load_config
 from pipeline.pipeline import run_pipeline
 
-try:
-    from openai import OpenAI
-except Exception:
-    OpenAI = None
-
-# ... (rest of the file unchanged)
-SEGMENT_KEYWORDS: Dict[str, set[str]] = {
-    "water": {"water", "river", "lake", "pond", "sea", "ocean"},
-    "tree": {"tree", "trees", "forest", "woodland", "vegetation"},
-    "building": {"building", "buildings", "house", "houses", "structure"},
-    "road": {"road", "roads", "street", "highway", "path"},
+# ----------------------------
+# Lightweight NL parsing
+# ----------------------------
+KNOWN_SEGMENTS = {
+    "water": ["water", "river", "lake", "lagoon", "reservoir"],
+    "urban": ["urban", "building", "settlement", "town", "city"],
+    "vegetation": ["vegetation", "forest", "trees", "crop", "agriculture"],
 }
 
-
-def parse_user_text(question: str, *, client: Optional[OpenAI] = None) -> List[str]:
-    question_lower = question.lower()
-    if client is not None:
-        try:
-            response = client.responses.create(
-                model="gpt-4o-mini",
-                input=question,
-                tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "set_segments",
-                            "description": "Extract referenced segment types",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "segments": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                    }
-                                },
-                                "required": ["segments"],
-                            },
-                        },
-                    }
-                ],
-                tool_choice={"type": "function", "function": {"name": "set_segments"}},
-            )
-            tool_call = response.output[0].content[0].tool_call
-            args = json.loads(tool_call["arguments"])
-            segments = args.get("segments", [])
-            if segments:
-                return [s for s in segments if s in SEGMENT_KEYWORDS]
-        except Exception:
-            pass
-
-    segments = []
-    for segment, words in SEGMENT_KEYWORDS.items():
-        if any(w in question_lower for w in words):
-            segments.append(segment)
-    return segments
+def parse_user_text(text: str) -> List[str]:
+    t = text.lower()
+    found = []
+    for key, vocab in KNOWN_SEGMENTS.items():
+        if any(v in t for v in vocab):
+            found.append(key)
+    return list(dict.fromkeys(found))  # de-dup order
 
 
-def map_keywords_to_segments(keywords: Iterable[str]) -> List[str]:
-    segments = []
-    for kw in keywords:
-        for segment, words in SEGMENT_KEYWORDS.items():
-            if kw in words or kw == segment:
-                segments.append(segment)
-                break
-    seen = set()
-    return [s for s in segments if not (s in seen or seen.add(s))]
+# ----------------------------
+# File discovery aligned to pipeline outputs
+# ----------------------------
+def _segment_file(out_dir: str) -> Optional[Path]:
+    """
+    MODIFIED: pipeline writes a single 'segments.gpkg' per run/output folder.
+    """
+    p = Path(out_dir) / "segments.gpkg"
+    return p if p.exists() else None
 
 
-def _segment_file(out_dir: str, segment: str) -> Optional[Path]:
-    files = sorted(Path(out_dir).glob(f"segment_{segment}_*.gpkg"))
-    return files[-1] if files else None
-
-
-def fetch_segment_data(segment: str, out_dir: str) -> Tuple[gpd.GeoDataFrame, float]:
-    gpkg = _segment_file(out_dir, segment)
+def fetch_segment_data(out_dir: str) -> Tuple[gpd.GeoDataFrame, float]:
+    gpkg = _segment_file(out_dir)
     if gpkg is None:
-        raise FileNotFoundError(
-            f"No GeoPackage found for segment '{segment}' in '{out_dir}'"
-        )
+        raise FileNotFoundError(f"No GeoPackage found in '{out_dir}'")
     gdf = gpd.read_file(gpkg)
+    # Raw area here is unitless – you should prefer using vectorizer.summarise for m².
     area = gdf.geometry.area.sum()
-    return gdf, area
+    return gdf, float(area)
 
 
+# ----------------------------
+# Main entry for Streamlit
+# ----------------------------
 def ask(
     question: str,
     bbox: Iterable[float],
     *,
     out_dir: str = "data",
     use_altair: bool = True,
+    device: str = "cuda",
+    model_dir: str = "checkpoints",
+    sam2_checkpoint: str = "sam2_hiera_l.pt",
+    box_threshold: float = 0.24,
+    text_threshold: float = 0.24,
 ):
+    """
+    MODIFIED: accept and propagate device/checkpoint/thresholds so CUDA is respected end-to-end.
+    """
     segments = parse_user_text(question)
     if not segments:
         raise ValueError("No known segment types referenced in question")
 
-    config = load_config(bbox=bbox, out_dir=out_dir)
-
-    if any(_segment_file(config.out_dir, s) is None for s in segments):
-        for seg in segments:
-            seg_out_dir = os.path.join(config.out_dir, seg)
-            seg_config = PipelineConfig(**{**config.__dict__, "out_dir": seg_out_dir})
-            run_pipeline(seg_config, text_prompts=[seg])
-
-    data = []
+    results = []
     for seg in segments:
-        gdf, area = fetch_segment_data(seg, os.path.join(config.out_dir, seg))
-        data.append({"segment": seg, "area_m2": area})
+        seg_out_dir = os.path.join(out_dir, seg)
+        cfg: PipelineConfig = load_config(
+            bbox=tuple(bbox),
+            out_dir=seg_out_dir,
+            device=device,
+            model_dir=model_dir,
+            sam2_checkpoint=sam2_checkpoint,
+            box_threshold=box_threshold,
+            text_threshold=text_threshold,
+        )
+        if _segment_file(seg_out_dir) is None:
+            run_pipeline(cfg, text_prompts=[seg])
 
-    df = pd.DataFrame(data)
+        gdf, area = fetch_segment_data(seg_out_dir)
+        results.append({"segment": seg, "area_units": "crs_units", "area": area})
+
+    df = pd.DataFrame(results)
+
     if use_altair:
-        chart = alt.Chart(df).mark_bar().encode(x="segment", y="area_m2")
-    else:
-        import plotly.express as px
+        import altair as alt
 
-        chart = px.bar(df, x="segment", y="area_m2")
-    return chart, df
+        chart = (
+            alt.Chart(df)
+            .mark_bar()
+            .encode(
+                x=alt.X("segment:N", title="Segment"),
+                y=alt.Y("area:Q", title="Area (crs units; see vectorizer.summarise for m²)"),
+                tooltip=["segment", "area"]
+            )
+        )
+        return chart, df
 
-
-def _main() -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Query pipeline outputs using natural language"
-    )
-    parser.add_argument("question", help="Natural language question")
-    parser.add_argument(
-        "bbox", nargs=4, type=float, help="Bounding box xmin ymin xmax ymax"
-    )
-    parser.add_argument("--out-dir", default="data", help="Pipeline output directory")
-    parser.add_argument(
-        "--plotly",
-        action="store_true",
-        help="Use Plotly instead of Altair for the chart",
-    )
-    args = parser.parse_args()
-
-    chart, df = ask(
-        args.question, args.bbox, out_dir=args.out_dir, use_altair=not args.plotly
-    )
-    print(df)
-    if hasattr(chart, "show"):
-        chart.show()
-    else:
-        chart.display()
-
-
-if __name__ == "__main__":
-    _main()
+    return None, df

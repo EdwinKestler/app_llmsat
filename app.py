@@ -1,104 +1,91 @@
-import streamlit as st
+# app_stremlit/app.py
 import os
+import streamlit as st
 import altair as alt
 import pandas as pd
-import torch  # Added for GPU check
+import torch
 from dotenv import load_dotenv
-from pipeline.config import PipelineConfig
+
+from pipeline.config import PipelineConfig, load_config
+from pipeline.pipeline import run_pipeline
 from nl_query.openai_handler import ask
 
-# Load .env file
 load_dotenv()
-
 st.set_page_config(layout="wide")
 st.title("🌍 Geospatial Segmentation Query Tool")
 
-with st.sidebar:
-    st.header("Configuration")
-    out_dir = st.text_input("Output Directory", value="output")
-    model_dir = st.text_input("Model Directory", value="checkpoints")
-    sam2_checkpoint = st.text_input("SAM2 Checkpoint", value="sam2_hiera_l.pt")
-    device = st.selectbox("Device", ["cuda", "cpu"], index=0 if torch.cuda.is_available() else 1)
-    if device == "cuda" and not torch.cuda.is_available():
-        st.warning("CUDA selected but no GPU detected. Falling back to CPU.")
-        device = "cpu"
+# Sidebar controls
+st.sidebar.header("Configuration")
+out_dir = st.sidebar.text_input("Output directory", value="data")
+device = st.sidebar.selectbox("Device", options=["cuda", "cpu"], index=0 if torch.cuda.is_available() else 1)
+model_dir = st.sidebar.text_input("Model directory", value="checkpoints")
+sam2_checkpoint = st.sidebar.text_input("SAM2 checkpoint filename", value="sam2_hiera_l.pt")
+box_threshold = st.sidebar.slider("Box threshold", min_value=0.0, max_value=1.0, value=0.24, step=0.01)
+text_threshold = st.sidebar.slider("Text threshold", min_value=0.0, max_value=1.0, value=0.24, step=0.01)
 
-st.subheader("Define Area and Query")
-bbox_str = st.text_input(
-    "Bounding Box (west, south, east, north in EPSG:4326)",
-    value="-74.01, 40.70, -73.99, 40.72",
-    help="Example: Manhattan area coordinates.",
-)
-question = st.text_area(
-    "Natural Language Question",
-    value="What is the total area of buildings and trees?",
-    help="Ask about segments like water, trees, buildings, roads. E.g., 'How much area is covered by water and roads?'",
-)
+st.sidebar.markdown("---")
+st.sidebar.header("ROI (EPSG:4326)")
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    west = st.number_input("West (λ min)", value=-90.6)
+    east = st.number_input("East (λ max)", value=-90.5)
+with col2:
+    south = st.number_input("South (φ min)", value=14.58)
+    north = st.number_input("North (φ max)", value=14.66)
 
-run_query = st.button("Run Query", type="primary")
+bbox = (west, south, east, north)
 
-if run_query:
-    if not question:
-        st.error("Please enter a question.")
-    elif not bbox_str:
-        st.error("Please enter a bounding box.")
-    else:
-        try:
-            bbox = [float(coord.strip()) for coord in bbox_str.split(",")]
-            if len(bbox) != 4:
-                raise ValueError(
-                    "Bounding box must have exactly 4 values: west, south, east, north."
-                )
-
-            openai_api_key = os.getenv("OPENAI_API_KEY")
-            if openai_api_key:
-                os.environ["OPENAI_API_KEY"] = openai_api_key
-            else:
-                st.warning(
-                    "No OpenAI API key found in .env file. Falling back to simple keyword parsing."
-                )
-
-            config = PipelineConfig(
-                bbox=bbox,
-                zoom=18,
-                out_dir=out_dir,
-                model_dir=model_dir,
-                sam2_checkpoint=sam2_checkpoint,
-                box_threshold=0.24,
-                text_threshold=0.24,
-                device=device,
-            )
-
-            with st.spinner(
-                f"Processing query on {device}... This may take a while if segmentation is needed."
-            ):
-                chart, df = ask(question, bbox, out_dir=out_dir)
-
-            st.subheader("Results")
-            st.dataframe(df.style.format({"area_m2": "{:.2f}"}))
-
-            st.subheader("Visualization")
-            st.altair_chart(
-                chart.mark_bar()
-                .encode(
-                    x=alt.X("segment:N", title="Segment"),
-                    y=alt.Y("area_m2:Q", title="Area (m²)"),
-                    color="segment:N",
-                )
-                .properties(width=600, height=400),
-                use_container_width=True,
-            )
-
-        except ValueError as ve:
-            st.error(f"Invalid input: {str(ve)}")
-        except FileNotFoundError as fe:
-            st.error(
-                f"Missing file: {str(fe)}. Ensure models are downloaded to the model directory."
-            )
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
+# CUDA status
+if device == "cuda":
+    st.info("CUDA selected.")
+    if not torch.cuda.is_available():
+        st.warning("CUDA was selected but torch.cuda.is_available() == False. Falling back to CPU at runtime.")
 
 st.markdown("---")
-st.markdown(
-    "Powered by SAM2, LangSAM, and OpenAI. Ensure required models are in the checkpoints directory."
-)
+
+tab1, tab2 = st.tabs(["🔎 Natural Language Query", "🧪 Run Pipeline (Manual)"])
+
+with tab1:
+    question = st.text_input("Ask for segments (e.g., 'water bodies and urban areas')", value="water and urban")
+    use_altair = st.checkbox("Show Altair chart", value=True)
+    if st.button("Run NL Query"):
+        try:
+            chart, df = ask(
+                question,
+                bbox,
+                out_dir=out_dir,
+                use_altair=use_altair,
+                device=device,
+                model_dir=model_dir,
+                sam2_checkpoint=sam2_checkpoint,
+                box_threshold=box_threshold,
+                text_threshold=text_threshold,
+            )
+            if chart is not None:
+                st.altair_chart(chart, use_container_width=True)
+            st.dataframe(df)
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+with tab2:
+    segments_raw = st.text_input("Text prompts (comma-separated)", value="water")
+    segments = [s.strip() for s in segments_raw.split(",") if s.strip()]
+    if st.button("Run Manual Pipeline"):
+        try:
+            cfg = load_config(
+                bbox=bbox,
+                out_dir=out_dir,
+                device=device,
+                model_dir=model_dir,
+                sam2_checkpoint=sam2_checkpoint,
+                box_threshold=box_threshold,
+                text_threshold=text_threshold,
+            )
+            run_pipeline(cfg, text_prompts=segments)
+            st.success("Pipeline run completed.")
+            st.write(f"Output directory: `{out_dir}`")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+st.markdown("---")
+st.caption("Powered by SAM2, LangSAM, and OpenAI. Ensure required models are in the checkpoints directory.")

@@ -17,8 +17,8 @@ import numpy as np
 import rasterio
 import geopandas as gpd
 from shapely.geometry import box
-from samgeo import SamGeo, tms_to_geotiff
-from samgeo.text_sam import LangSAM
+from samgeo_stub import SamGeo, tms_to_geotiff
+from samgeo_stub.text_sam import LangSAM
 import folium
 from folium import FeatureGroup, LayerControl, GeoJson
 from rasterio.features import shapes

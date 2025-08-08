@@ -4,8 +4,8 @@ import rasterio
 import geopandas as gpd
 from shapely.geometry import shape
 from datetime import datetime
-from samgeo import SamGeo, tms_to_geotiff
-from samgeo.text_sam import LangSAM
+from samgeo_stub import SamGeo, tms_to_geotiff
+from samgeo_stub.text_sam import LangSAM
 import leafmap
 import torch
 from rasterio.features import shapes

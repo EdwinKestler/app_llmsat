@@ -1,5 +1,5 @@
 import os
-from samgeo import SamGeo
+from samgeo_stub import SamGeo
 
 
 def run_samgeo_on_tif(
