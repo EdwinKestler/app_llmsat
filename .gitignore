@@ -13,3 +13,6 @@ gee_auth/
 .env
 *.pyc
 __pycache__/
+
+old_files/
+*.gpkg
