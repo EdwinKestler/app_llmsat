@@ -1,25 +1,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Optional, Any
+from typing import Any, Optional, Tuple
 import yaml
 
 
 @dataclass
 class PipelineConfig:
-    """Configuration options for the processing pipeline."""
+    """Configuration options for the processing pipeline.
 
-    from pipeline import PipelineConfig
+    Attributes
+    ----------
+    bbox:
+        Bounding box in ``(west, south, east, north)`` order expressed in
+        EPSG:4326 coordinates.
+    zoom:
+        Web mercator zoom level used when downloading imagery tiles.
+    out_dir:
+        Directory where all generated artefacts are written.
+    model_dir:
+        Directory containing model checkpoints.
+    sam2_checkpoint:
+        File name of the SAM2 checkpoint located inside ``model_dir``.
+    box_threshold / text_threshold:
+        Detection thresholds passed through to the segmentation models.
+    """
 
-config = PipelineConfig(
-    bbox=(-74.01, 40.70, -73.99, 40.72),  # west, south, east, north (EPSG:4326)
-    zoom=18,
-    out_dir="output",
-    model_dir="checkpoints",
-    sam2_checkpoint="sam2_hiera_l.pt",
-    box_threshold=0.24,
-    text_threshold=0.24,
-)
+    bbox: Tuple[float, float, float, float] = (-74.01, 40.70, -73.99, 40.72)
+    zoom: int = 18
+    out_dir: str = "output"
+    model_dir: str = "checkpoints"
+    sam2_checkpoint: str = "sam2_hiera_l.pt"
+    box_threshold: float = 0.24
+    text_threshold: float = 0.24
 
 
 def load_config(path: Optional[str] = None, **overrides: Any) -> PipelineConfig:
