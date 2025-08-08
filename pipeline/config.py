@@ -37,7 +37,7 @@ class PipelineConfig:
     text_threshold: float = 0.24
 
     # Imagery
-    tms_source: str = "satellite"                  # placeholder; customize (e.g., "Esri.WorldImagery")
+    tms_source: str = "satellite"                  # customize (e.g., "Esri.WorldImagery")
     zoom: int = 16
 
     # Checkpoints (names you actually have on disk)
@@ -56,16 +56,15 @@ class PipelineConfig:
     def resolve_checkpoints(self) -> None:
         """
         Resolve checkpoints by filename presence under checkpoints_dir.
-        We record a dict with keys: 'sam2', 'sam', 'mobile_sam'.
-        Preference order for SAM2 is 'sam2_hiera_large.pt' > 'sam2_hiera_l.pt' > anything *.pt
+        Keys: 'sam2', 'sam', 'mobile_sam'.
+        Preference for SAM2: 'sam2_hiera_large.pt' > 'sam2_hiera_l.pt'.
         """
         ckproot = Path(self.checkpoints_dir)
 
-        # Normalize user-provided names if any
+        # SAM2
         cands_sam2 = []
         if self.sam2_checkpoint:
             cands_sam2.append(self.sam2_checkpoint)
-        # common fallback names you listed
         cands_sam2 += ["sam2_hiera_large.pt", "sam2_hiera_l.pt"]
 
         sam2_path = None
@@ -75,7 +74,7 @@ class PipelineConfig:
                 sam2_path = str(p)
                 break
 
-        # SAM (vit) classic
+        # Classic SAM
         sam_path = None
         if self.sam_checkpoint:
             p = ckproot / self.sam_checkpoint
@@ -86,7 +85,7 @@ class PipelineConfig:
             if p.exists() and p.is_file():
                 sam_path = str(p)
 
-        # mobile-SAM
+        # Mobile SAM
         mobile_path = None
         if self.mobile_sam_checkpoint:
             p = ckproot / self.mobile_sam_checkpoint
@@ -121,7 +120,17 @@ def load_config(
     sam2_checkpoint: Optional[str] = None,
     sam_checkpoint: Optional[str] = None,
     mobile_sam_checkpoint: Optional[str] = None,
+    # ---- Backward-compat alias ----
+    model_dir: Optional[str] = None,
 ) -> PipelineConfig:
+    """
+    NOTE: 'model_dir' is a deprecated alias for 'checkpoints_dir'.
+    If both are provided, 'checkpoints_dir' wins.
+    """
+    # Backward-compat: if old callers pass model_dir, use it unless checkpoints_dir was explicitly set differently
+    if model_dir and checkpoints_dir == "checkpoints":
+        checkpoints_dir = model_dir
+
     bbox_n = _normalize_bbox(bbox)
 
     # Default run folder under data/runs/<timestamp>

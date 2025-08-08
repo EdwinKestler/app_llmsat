@@ -59,10 +59,12 @@ def ask(
     out_dir: str = "data",
     use_altair: bool = True,
     device: str = "cuda",
-    model_dir: str = "checkpoints",
+    checkpoints_dir: str = "checkpoints",   # <— renamed, but we’ll still pass model_dir for legacy safety
     sam2_checkpoint: str = "sam2_hiera_l.pt",
     box_threshold: float = 0.24,
     text_threshold: float = 0.24,
+    # legacy shim (won't be needed once app.py stops passing it)
+    model_dir: Optional[str] = None,
 ):
     """
     MODIFIED: accept and propagate device/checkpoint/thresholds so CUDA is respected end-to-end.
@@ -78,10 +80,12 @@ def ask(
             bbox=tuple(bbox),
             out_dir=seg_out_dir,
             device=device,
-            model_dir=model_dir,
+            checkpoints_dir=checkpoints_dir,
             sam2_checkpoint=sam2_checkpoint,
             box_threshold=box_threshold,
             text_threshold=text_threshold,
+            # pass legacy param too in case someone else still uses it
+            model_dir=model_dir,
         )
         if _segment_file(seg_out_dir) is None:
             run_pipeline(cfg, text_prompts=[seg])

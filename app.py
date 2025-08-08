@@ -56,7 +56,7 @@ with tab1:
                 out_dir=out_dir,
                 use_altair=use_altair,
                 device=device,
-                model_dir=model_dir,
+                checkpoints_dir=model_dir,   # <— was model_dir=...
                 sam2_checkpoint=sam2_checkpoint,
                 box_threshold=box_threshold,
                 text_threshold=text_threshold,
@@ -76,7 +76,7 @@ with tab2:
                 bbox=bbox,
                 out_dir=out_dir,
                 device=device,
-                model_dir=model_dir,
+                checkpoints_dir=model_dir,   # <— was model_dir=...
                 sam2_checkpoint=sam2_checkpoint,
                 box_threshold=box_threshold,
                 text_threshold=text_threshold,
