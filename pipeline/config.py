@@ -8,7 +8,6 @@ import yaml
 @dataclass
 class PipelineConfig:
     """Configuration options for the processing pipeline."""
-
     bbox: tuple[float, float, float, float]
     zoom: int = 18
     out_dir: str = "output"
@@ -16,6 +15,7 @@ class PipelineConfig:
     sam2_checkpoint: str = "sam2_hiera_l.pt"
     box_threshold: float = 0.24
     text_threshold: float = 0.24
+    device: str = "cuda"
 
 
 def load_config(path: Optional[str] = None, **overrides: Any) -> PipelineConfig:
@@ -28,4 +28,7 @@ def load_config(path: Optional[str] = None, **overrides: Any) -> PipelineConfig:
                 raise TypeError("YAML configuration must be a mapping")
             data.update(file_data)
     data.update(overrides)
+    
+    if 'device' in data and data['device'] not in ['cuda', 'cpu']:
+        raise ValueError("Device must be 'cuda' or 'cpu'")
     return PipelineConfig(**data)

@@ -2,10 +2,10 @@ import streamlit as st
 import os
 import altair as alt
 import pandas as pd
+import torch  # Added for GPU check
 from dotenv import load_dotenv
-
-from nl_query.openai_handler import ask
 from pipeline.config import PipelineConfig
+from nl_query.openai_handler import ask
 
 # Load .env file
 load_dotenv()
@@ -18,6 +18,10 @@ with st.sidebar:
     out_dir = st.text_input("Output Directory", value="output")
     model_dir = st.text_input("Model Directory", value="checkpoints")
     sam2_checkpoint = st.text_input("SAM2 Checkpoint", value="sam2_hiera_l.pt")
+    device = st.selectbox("Device", ["cuda", "cpu"], index=0 if torch.cuda.is_available() else 1)
+    if device == "cuda" and not torch.cuda.is_available():
+        st.warning("CUDA selected but no GPU detected. Falling back to CPU.")
+        device = "cpu"
 
 st.subheader("Define Area and Query")
 bbox_str = st.text_input(
@@ -62,10 +66,11 @@ if run_query:
                 sam2_checkpoint=sam2_checkpoint,
                 box_threshold=0.24,
                 text_threshold=0.24,
+                device=device,
             )
 
             with st.spinner(
-                "Processing query... This may take a while if segmentation is needed."
+                f"Processing query on {device}... This may take a while if segmentation is needed."
             ):
                 chart, df = ask(question, bbox, out_dir=out_dir)
 

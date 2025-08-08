@@ -1,6 +1,5 @@
 import argparse
 from typing import List
-
 from pipeline import load_config, run_pipeline
 
 
@@ -27,11 +26,17 @@ def main() -> None:
         default=[],
         help="Text prompt for LangSAM. Can be repeated.",
     )
+    parser.add_argument(
+        "--device",
+        default="cuda",
+        choices=["cuda", "cpu"],
+        help="Device to run models on (cuda or cpu)",
+    )
     args = parser.parse_args()
 
     bbox = tuple(args.bbox)
     prompts: List[str] = args.prompt
-    config = load_config(bbox=bbox, out_dir=args.out_dir)
+    config = load_config(bbox=bbox, out_dir=args.out_dir, device=args.device)
     outputs = run_pipeline(config, prompts)
 
     for name, path in outputs.items():

@@ -1,54 +1,40 @@
 # 🛰️ Proyecto de Segmentación Visual de Imágenes Satelitales
 
-Este programa automatiza el proceso de análisis de imágenes satelitales para identificar y mostrar en un mapa diferentes tipos de elementos visibles en una zona.
+Este programa automatiza el análisis de imágenes satelitales para identificar y mapear elementos visibles en un área específica, con soporte para GPU (CUDA) para acelerar la segmentación.
 
 ## 📌 ¿Qué hace este programa?
 
-1. **Descarga automática de una imagen satelital**  
-   Toma una “foto desde el espacio” de un área específica usando un servicio de mapas (Esri Satellite).
-
-2. **Busca objetos en la imagen según palabras clave**  
-   El sistema entiende indicaciones como “árboles”, “agua”, “edificios” o “caminos”, y encuentra esas zonas en la imagen automáticamente.
-
-3. **Segmentación general automática (SAM)**  
-   Además de las búsquedas por palabra, detecta cualquier otro objeto visual destacable.  
-   Evita duplicaciones, excluyendo áreas ya etiquetadas.
-
-4. **Crea un mapa interactivo**  
-   Genera una página web donde puedes ver el mapa con cada capa marcada por colores.  
-   Puedes activar/desactivar las capas y explorar los datos visualmente.
-
-5. **Calcula porcentajes de cobertura**  
-   Mide qué porcentaje del área cubre cada tipo de objeto (ej. “15% edificios”).  
-   Esta información se muestra visualmente en el mapa.
-
-6. **Exporta resultados**  
-   Guarda:
-   - Un archivo `.csv` con los porcentajes y áreas por tipo de objeto.
-   - Un archivo `.html` con el mapa interactivo.
-   - Archivos geoespaciales `.gpkg` y `.shp` para usar en software de mapas (QGIS, ArcGIS, etc).
+1. **Descarga automática de imágenes satelitales** usando Esri Satellite.
+2. **Segmentación semántica (LangSAM)** con prompts como "árboles", "agua".
+3. **Segmentación general (SAM2)** para detectar objetos destacados.
+4. **Vectorización y análisis** de áreas (m²) y porcentajes.
+5. **Visualización** en mapas interactivos (HTML) y gráficos (Altair).
+6. **Exporta** GeoTIFFs, GeoPackages, CSVs, y mapas HTML.
 
 ## 🗂️ Archivos generados
 
-- `output/esri_image_<fecha>.tif`: imagen satelital base.
-- `output/segment_<clase>_<fecha>.gpkg`: zonas segmentadas por tipo (árboles, agua, etc.).
-- `output/sam_segment_<fecha>.gpkg`: otras zonas destacadas automáticamente.
-- `output/segmentacion_mapa_<fecha>.html`: mapa interactivo.
-- `output/coverage_summary_<fecha>.csv`: tabla resumen de áreas y porcentajes.
+- `output/s2harm_rgb_saa.tif`: Imagen satelital.
+- `output/segment_<clase>_<fecha>.gpkg`: Segmentos por tipo.
+- `output/sam2_mask.tif`: Máscara SAM2.
+- `output/segments.gpkg`, `summary.csv`: Resumen vectorial/áreas.
+- `output/segmentacion_mapa_<fecha>.html`: Mapa interactivo.
 
-## 💡 Ejemplo de resumen generado
+## ✅ Requisitos
 
-Árboles: 12.34%
-Agua: 8.91%
-Edificios: 20.10%
-Caminos: 15.67%
-Otros objetos (SAM): 43.00%
-
-Este resumen también aparece como una caja flotante en la esquina del mapa web generado.
-
-## ✅ Requisitos para ejecutar
 - Python 3.9+
-- Instalar librerías: `samgeo`, `leafmap`, `rasterio`, `geopandas`, `torch`, `shapely`
+- Instalar dependencias: `pip install -r requirements.txt` o `conda env create -f environment.yml`
+- **GPU Support**:
+  - NVIDIA GPU con CUDA (verifique con `nvidia-smi`).
+  - Instalar PyTorch con CUDA: `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118` (ajuste según su versión de CUDA).
+  - Descargar el checkpoint SAM2 (`sam2_hiera_l.pt`) a `checkpoints/` desde [SAM2 repo](https://github.com/facebookresearch/segment-anything-2).
+- Configurar `OPENAI_API_KEY` en un archivo `.env` para consultas en lenguaje natural.
+
+## 🚀 Uso
+
+- **CLI**: `python cli.py --bbox -74.01 40.70 -73.99 40.72 --prompt trees --prompt water --device cuda`
+- **Streamlit**: `streamlit run app.py` (seleccione `cuda` o `cpu` en la barra lateral).
+- Nota: `samgeo_utils.py` está obsoleto (en `old_files/`) y reemplazado por el pipeline modular en `pipeline/`.
 
 ## 👨‍💻 Autor
-Desarrollado por Edwin Kestler, para proyectos de agricultura de precisión, supervisión urbana y análisis ambiental.
+
+Desarrollado por Edwin Kestler para agricultura de precisión, supervisión urbana y análisis ambiental.

@@ -6,10 +6,18 @@ import os
 from typing import Iterable
 
 import numpy as np
+import torch
 import rasterio
 from samgeo import SamGeo
 from samgeo.text_sam import LangSAM
 from pipeline.config import PipelineConfig
+
+
+def log_gpu_usage():
+    """Log GPU device and memory usage for debugging."""
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"Memory Allocated: {torch.cuda.memory_allocated(0)/1024**2:.2f} MB")
 
 
 def run_langsam(
@@ -24,7 +32,7 @@ def run_langsam(
     text_prompts: Iterable[str]
         Collection of text prompts to detect.
     config: PipelineConfig
-        Pipeline configuration providing output directory and thresholds.
+        Pipeline configuration providing output directory, thresholds, and device.
 
     Returns
     -------
@@ -32,7 +40,13 @@ def run_langsam(
         Path to the combined LangSAM mask as a GeoTIFF.
     """
     os.makedirs(config.out_dir, exist_ok=True)
-    lang_sam = LangSAM()
+    
+    # Determine device
+    device = config.device if hasattr(config, 'device') else ('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Running LangSAM on {device}")
+    log_gpu_usage()
+
+    lang_sam = LangSAM(device=device)  # Pass device to LangSAM
 
     with rasterio.open(image_path) as src:
         profile = src.profile
@@ -44,6 +58,7 @@ def run_langsam(
             text_prompt=prompt,
             box_threshold=config.box_threshold,
             text_threshold=config.text_threshold,
+            device=device,
         )
         tmp = os.path.join(config.out_dir, f"langsam_{prompt}.tif")
         lang_sam.show_anns(
@@ -64,16 +79,12 @@ def run_langsam(
 def run_sam2(image_path: str, config: PipelineConfig) -> str:
     """Run general segmentation using SAM2 via the ``samgeo`` library.
 
-    This function expects the SAM2 checkpoint to be located inside
-    ``config.model_dir``.
-
     Parameters
     ----------
     image_path: str
         Path to the image to segment.
     config: PipelineConfig
-        Pipeline configuration providing output directory and checkpoint
-        information.
+        Pipeline configuration providing output directory, checkpoint, and device.
 
     Returns
     -------
@@ -87,7 +98,18 @@ def run_sam2(image_path: str, config: PipelineConfig) -> str:
             f"SAM2 checkpoint '{config.sam2_checkpoint}' not found in model_dir"
         )
 
-    sam = SamGeo(model_type="sam2_hiera_l", checkpoint=checkpoint)
+    # Determine device
+    device = config.device if hasattr(config, 'device') else ('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Running SAM2 on {device}")
+    log_gpu_usage()
+
+    sam = SamGeo(model_type="sam2_hiera_l", checkpoint=checkpoint, device=device)
     mask_path = os.path.join(config.out_dir, "sam2_mask.tif")
-    sam.generate(source=image_path, output=mask_path, batch=True, foreground=True)
+    sam.generate(
+        source=image_path,
+        output=mask_path,
+        batch=True,
+        foreground=True,
+        unique=True,  # Added from samgeo_utils.py
+    )
     return mask_path
