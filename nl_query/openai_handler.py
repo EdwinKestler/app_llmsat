@@ -25,6 +25,7 @@ SEGMENT_KEYWORDS: Dict[str, set[str]] = {
     "road": {"road", "roads", "street", "highway", "path"},
 }
 
+
 def parse_user_text(question: str, *, client: Optional[OpenAI] = None) -> List[str]:
     question_lower = question.lower()
     if client is not None:
@@ -67,6 +68,7 @@ def parse_user_text(question: str, *, client: Optional[OpenAI] = None) -> List[s
             segments.append(segment)
     return segments
 
+
 def map_keywords_to_segments(keywords: Iterable[str]) -> List[str]:
     segments = []
     for kw in keywords:
@@ -77,19 +79,30 @@ def map_keywords_to_segments(keywords: Iterable[str]) -> List[str]:
     seen = set()
     return [s for s in segments if not (s in seen or seen.add(s))]
 
+
 def _segment_file(out_dir: str, segment: str) -> Optional[Path]:
     files = sorted(Path(out_dir).glob(f"segment_{segment}_*.gpkg"))
     return files[-1] if files else None
 
+
 def fetch_segment_data(segment: str, out_dir: str) -> Tuple[gpd.GeoDataFrame, float]:
     gpkg = _segment_file(out_dir, segment)
     if gpkg is None:
-        raise FileNotFoundError(f"No GeoPackage found for segment '{segment}' in '{out_dir}'")
+        raise FileNotFoundError(
+            f"No GeoPackage found for segment '{segment}' in '{out_dir}'"
+        )
     gdf = gpd.read_file(gpkg)
     area = gdf.geometry.area.sum()
     return gdf, area
 
-def ask(question: str, bbox: Iterable[float], *, out_dir: str = "data", use_altair: bool = True):
+
+def ask(
+    question: str,
+    bbox: Iterable[float],
+    *,
+    out_dir: str = "data",
+    use_altair: bool = True,
+):
     segments = parse_user_text(question)
     if not segments:
         raise ValueError("No known segment types referenced in question")
@@ -112,26 +125,38 @@ def ask(question: str, bbox: Iterable[float], *, out_dir: str = "data", use_alta
         chart = alt.Chart(df).mark_bar().encode(x="segment", y="area_m2")
     else:
         import plotly.express as px
+
         chart = px.bar(df, x="segment", y="area_m2")
     return chart, df
 
+
 def _main() -> None:
     import argparse
-    parser = argparse.ArgumentParser(description="Query pipeline outputs using natural language")
+
+    parser = argparse.ArgumentParser(
+        description="Query pipeline outputs using natural language"
+    )
     parser.add_argument("question", help="Natural language question")
-    parser.add_argument("bbox", nargs=4, type=float, help="Bounding box xmin ymin xmax ymax")
+    parser.add_argument(
+        "bbox", nargs=4, type=float, help="Bounding box xmin ymin xmax ymax"
+    )
     parser.add_argument("--out-dir", default="data", help="Pipeline output directory")
     parser.add_argument(
-        "--plotly", action="store_true", help="Use Plotly instead of Altair for the chart"
+        "--plotly",
+        action="store_true",
+        help="Use Plotly instead of Altair for the chart",
     )
     args = parser.parse_args()
 
-    chart, df = ask(args.question, args.bbox, out_dir=args.out_dir, use_altair=not args.plotly)
+    chart, df = ask(
+        args.question, args.bbox, out_dir=args.out_dir, use_altair=not args.plotly
+    )
     print(df)
     if hasattr(chart, "show"):
         chart.show()
     else:
         chart.display()
+
 
 if __name__ == "__main__":
     _main()

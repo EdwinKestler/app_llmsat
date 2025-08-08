@@ -17,17 +17,19 @@ with rasterio.open(input_path) as src:
     crs = CRS.from_epsg(4326)  # WGS84
 
     profile = src.profile
-    profile.update({
-        'driver': 'GTiff',
-        'height': height,
-        'width': width,
-        'count': count,
-        'dtype': dtype,
-        'crs': crs,
-        'transform': transform
-    })
+    profile.update(
+        {
+            "driver": "GTiff",
+            "height": height,
+            "width": width,
+            "count": count,
+            "dtype": dtype,
+            "crs": crs,
+            "transform": transform,
+        }
+    )
 
-    with rasterio.open(output_path, 'w', **profile) as dst:
+    with rasterio.open(output_path, "w", **profile) as dst:
         dst.write(data)
 
 print("✅ Imagen georreferenciada guardada como:", output_path)

@@ -18,7 +18,7 @@ bbox = [-90.015147, 14.916566, -90.010159, 14.919471]
 zoom = 19
 output_dir = os.path.abspath("output")
 checkpoint_dir = os.path.abspath("checkpoints")
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 MIN_AREA = 2  # Área mínima para considerar polígonos válidos
 
@@ -29,17 +29,22 @@ if not os.path.isfile(lang_checkpoint):
 else:
     print(f"✅ Checkpoint encontrado: {lang_checkpoint}")
 
+
 def setup_directories():
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+
 def download_tms_image(bbox, zoom):
     image_path = os.path.join(output_dir, f"esri_image_{timestamp}.tif")
-    tms_to_geotiff(output=image_path, bbox=bbox, zoom=zoom, source="Satellite", overwrite=True)
+    tms_to_geotiff(
+        output=image_path, bbox=bbox, zoom=zoom, source="Satellite", overwrite=True
+    )
     if os.path.getsize(image_path) < 10_000:
         raise ValueError("Archivo TMS descargado parece estar corrupto o vacío.")
     print(f"✅ Imagen TMS descargada: {image_path}")
     return image_path
+
 
 def process_text_segmentation(text_prompts, image_path, profile):
     lang_sam = LangSAM()
@@ -48,9 +53,16 @@ def process_text_segmentation(text_prompts, image_path, profile):
     print("🧠 Generando máscaras por texto:", text_prompts)
     for prompt in text_prompts:
         print(f"   📌 Procesando prompt: '{prompt}'")
-        lang_sam.predict(image=image_path, text_prompt=prompt, box_threshold=0.24, text_threshold=0.24)
+        lang_sam.predict(
+            image=image_path,
+            text_prompt=prompt,
+            box_threshold=0.24,
+            text_threshold=0.24,
+        )
         temp_mask_path = os.path.join(output_dir, f"mask_{prompt}_{timestamp}.tif")
-        lang_sam.show_anns(cmap="Greens", add_boxes=True, alpha=1, blend=False, output=temp_mask_path)
+        lang_sam.show_anns(
+            cmap="Greens", add_boxes=True, alpha=1, blend=False, output=temp_mask_path
+        )
 
         with rasterio.open(temp_mask_path) as src:
             mask = src.read(1)
@@ -68,13 +80,14 @@ def process_text_segmentation(text_prompts, image_path, profile):
         vector_out = os.path.join(output_dir, f"segment_{prompt}_{timestamp}.gpkg")
         gdf = gpd.GeoDataFrame(props, geometry=geoms, crs=crs)
         gdf.to_file(vector_out, driver="GPKG")
-        gdf.to_file(vector_out.replace('.gpkg', '.shp'), driver="ESRI Shapefile")
+        gdf.to_file(vector_out.replace(".gpkg", ".shp"), driver="ESRI Shapefile")
         print(f"✅ Segmentación para '{prompt}' guardada en: {vector_out}")
 
         prompt_outputs[prompt] = vector_out
         os.remove(temp_mask_path)
 
     return prompt_outputs
+
 
 def run_sam_segmentation(image_path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -84,9 +97,12 @@ def run_sam_segmentation(image_path):
 
     sam = SamGeo(model_type="vit_h", checkpoint=checkpoint_path, device=device)
     filtered_mask_path = os.path.join(output_dir, f"sam_mask_all_{timestamp}.tif")
-    sam.generate(source=image_path, output=filtered_mask_path, batch=True, foreground=True)
+    sam.generate(
+        source=image_path, output=filtered_mask_path, batch=True, foreground=True
+    )
     print(f"✅ Segmentación SAM completada: {filtered_mask_path}")
     return filtered_mask_path
+
 
 def save_sam_segments(filtered_mask_path):
     with rasterio.open(filtered_mask_path) as mask_src:
@@ -105,9 +121,10 @@ def save_sam_segments(filtered_mask_path):
     vector_out = os.path.join(output_dir, f"sam_segment_{timestamp}.gpkg")
     gdf = gpd.GeoDataFrame(props, geometry=geoms, crs=crs)
     gdf.to_file(vector_out, driver="GPKG")
-    gdf.to_file(vector_out.replace('.gpkg', '.shp'), driver="ESRI Shapefile")
+    gdf.to_file(vector_out.replace(".gpkg", ".shp"), driver="ESRI Shapefile")
     print(f"✅ Segmentación SAM final guardada en: {vector_out}")
     return vector_out
+
 
 def calculate_urbanization_index(prompt_outputs):
     """Calcula el índice de urbanización como el porcentaje del área cubierta por edificios y caminos respecto al total segmentado."""
@@ -129,14 +146,16 @@ def create_interactive_map_folium(bbox, prompt_outputs, sam_vector_out, output_h
     center_lat = (bbox[1] + bbox[3]) / 2
     center_lon = (bbox[0] + bbox[2]) / 2
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=18, tiles='Esri.WorldImagery')
+    m = folium.Map(
+        location=[center_lat, center_lon], zoom_start=18, tiles="Esri.WorldImagery"
+    )
 
     layer_styles = {
         "tree": {"color": "#00CC00", "fillColor": "#00FF00"},
         "river": {"color": "#3399FF", "fillColor": "#66B2FF"},
         "building": {"color": "#8B4513", "fillColor": "#CD853F"},
         "bridge": {"color": "#555555", "fillColor": "#AAAAAA"},
-        "SAM_segment": {"color": "#FF6600", "fillColor": "#FF9933"}
+        "SAM_segment": {"color": "#FF6600", "fillColor": "#FF9933"},
     }
 
     # Añade capas vectoriales segmentadas
@@ -150,9 +169,9 @@ def create_interactive_map_folium(bbox, prompt_outputs, sam_vector_out, output_h
                 "color": style["color"],
                 "weight": 1,
                 "fillColor": style["fillColor"],
-                "fillOpacity": 0.4
+                "fillOpacity": 0.4,
             },
-            tooltip=GeoJsonTooltip(fields=["label"])
+            tooltip=GeoJsonTooltip(fields=["label"]),
         )
         geojson.add_to(m)
 
@@ -164,9 +183,9 @@ def create_interactive_map_folium(bbox, prompt_outputs, sam_vector_out, output_h
             "color": "#FF6600",
             "weight": 1,
             "fillColor": "#FF9933",
-            "fillOpacity": 0.2
+            "fillOpacity": 0.2,
         },
-        tooltip=GeoJsonTooltip(fields=["label"])
+        tooltip=GeoJsonTooltip(fields=["label"]),
     ).add_to(m)
 
     LayerControl(collapsed=False).add_to(m)
@@ -201,6 +220,7 @@ def create_interactive_map_folium(bbox, prompt_outputs, sam_vector_out, output_h
     m.save(output_html)
     print(f"🌍 Mapa Folium exportado a: {output_html}")
 
+
 def calculate_class_coverage(prompt_outputs, sam_vector_out):
     print("📊 Calculando cobertura por clase...")
     total_area = 0.0
@@ -227,8 +247,7 @@ def calculate_class_coverage(prompt_outputs, sam_vector_out):
     csv_path = os.path.join(output_dir, f"coverage_summary_{timestamp}.csv")
     df.to_csv(csv_path, index=False)
     print(f"📄 Cobertura exportada a CSV: {csv_path}")
-    
-    
+
 
 def main():
     setup_directories()
@@ -239,10 +258,15 @@ def main():
     prompt_outputs = process_text_segmentation(text_prompts, image_path, profile)
     filtered_mask_path = run_sam_segmentation(image_path)
     sam_vector_out = save_sam_segments(filtered_mask_path)
-    create_interactive_map_folium(bbox, prompt_outputs, sam_vector_out,
-                                  os.path.join(output_dir, "folium_with_satellite_and_all_layers.html"))
+    create_interactive_map_folium(
+        bbox,
+        prompt_outputs,
+        sam_vector_out,
+        os.path.join(output_dir, "folium_with_satellite_and_all_layers.html"),
+    )
     calculate_class_coverage(prompt_outputs, sam_vector_out)
     print("✅ Proceso completado.")
+
 
 if __name__ == "__main__":
     main()

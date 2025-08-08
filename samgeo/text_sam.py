@@ -8,11 +8,19 @@ from rasterio.transform import from_origin
 
 
 class LangSAM:
-    def predict(self, image: str, text_prompt: str, box_threshold: float = 0.24, text_threshold: float = 0.24):
+    def predict(
+        self,
+        image: str,
+        text_prompt: str,
+        box_threshold: float = 0.24,
+        text_threshold: float = 0.24,
+    ):
         """Placeholder predict method doing nothing."""
         pass
 
-    def show_anns(self, cmap: str, add_boxes: bool, alpha: float, blend: bool, output: str):
+    def show_anns(
+        self, cmap: str, add_boxes: bool, alpha: float, blend: bool, output: str
+    ):
         transform = from_origin(0, 0, 1, 1)
         profile = {
             "driver": "GTiff",

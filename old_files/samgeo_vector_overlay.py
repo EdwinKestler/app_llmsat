@@ -13,16 +13,18 @@ bbox = [-90.015147, 14.916566, -90.010159, 14.919471]
 zoom = 18
 output_dir = "output"
 cache_dir = "EsriCache"
-checkpoint_path = 'checkpoints/sam_vit_h_4b8939.pth'
+checkpoint_path = "checkpoints/sam_vit_h_4b8939.pth"
 
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(cache_dir, exist_ok=True)
 
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
 
 def cache_name(bbox, zoom):
     key = f"{bbox}-{zoom}".encode()
     return hashlib.md5(key).hexdigest()
+
 
 cache_file = os.path.join(cache_dir, f"{cache_name(bbox, zoom)}.tif")
 image_georef = os.path.join(output_dir, f"esri_export_georef_{timestamp}.tif")
@@ -32,7 +34,9 @@ vector_path = os.path.join(output_dir, f"segment_{timestamp}.gpkg")
 # === 1. Descarga imagen desde Esri ===
 if not os.path.exists(cache_file):
     print("⏬ Descargando imagen...")
-    tms_to_geotiff(output=cache_file, bbox=bbox, zoom=zoom, source='Satellite', overwrite=True)
+    tms_to_geotiff(
+        output=cache_file, bbox=bbox, zoom=zoom, source="Satellite", overwrite=True
+    )
 else:
     print("📂 Usando imagen desde caché.")
 
@@ -47,17 +51,19 @@ with rasterio.open(cache_file) as src:
     crs = CRS.from_epsg(4326)
 
     profile = src.profile.copy()
-    profile.update({
-        'driver': 'GTiff',
-        'height': height,
-        'width': width,
-        'count': count,
-        'dtype': dtype,
-        'crs': crs,
-        'transform': transform
-    })
+    profile.update(
+        {
+            "driver": "GTiff",
+            "height": height,
+            "width": width,
+            "count": count,
+            "dtype": dtype,
+            "crs": crs,
+            "transform": transform,
+        }
+    )
 
-    with rasterio.open(image_georef, 'w', **profile) as dst:
+    with rasterio.open(image_georef, "w", **profile) as dst:
         dst.write(data)
 
 sam_kwargs = {
@@ -71,21 +77,21 @@ sam_kwargs = {
 
 # === 3. Segmentación SAM ===
 print("🧠 Segmentando...")
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = "cuda" if torch.cuda.is_available() else "cpu"
 sam = SamGeo(
-    model_type='vit_h',
+    model_type="vit_h",
     checkpoint=checkpoint_path,
     device=device,
     sam_kwargs=sam_kwargs,
 )
 
 sam.generate(
-    image_georef, 
+    image_georef,
     mask_path,
     batch=True,
     foreground=True,
     erosion_kernel=(3, 3),
-    mask_multiplier=255
+    mask_multiplier=255,
 )
 
 # === 4. Vectorización ===
@@ -117,6 +123,6 @@ m.add_raster(image_georef, layer_name="GeoTIFF Segmentado")
 m.add_vector(vector_path, layer_name="Segmentación SAM", style=style)
 
 # Mostrar el mapa (en notebook o streamlit)
-#m.show()  # si estás en Jupyter
-#m.to_streamlit(height=700)  # si estás en Streamlit
+# m.show()  # si estás en Jupyter
+# m.to_streamlit(height=700)  # si estás en Streamlit
 m.to_html(f"output/mapa_segmentado_{timestamp}.html")

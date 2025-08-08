@@ -5,7 +5,9 @@ from pipeline import load_config, run_pipeline
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the geospatial processing pipeline")
+    parser = argparse.ArgumentParser(
+        description="Run the geospatial processing pipeline"
+    )
     parser.add_argument(
         "--bbox",
         nargs=4,

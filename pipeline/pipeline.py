@@ -37,7 +37,9 @@ def run_pipeline(config: PipelineConfig, text_prompts: Iterable[str]) -> Dict[st
     os.makedirs(config.out_dir, exist_ok=True)
 
     image_path = download_imagery(config=config)
-    semantic_mask = run_langsam(image_path=image_path, text_prompts=text_prompts, config=config)
+    semantic_mask = run_langsam(
+        image_path=image_path, text_prompts=text_prompts, config=config
+    )
     sam2_mask = run_sam2(image_path=image_path, config=config)
 
     gpkg_path = os.path.join(config.out_dir, "segments.gpkg")

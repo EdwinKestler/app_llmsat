@@ -7,7 +7,9 @@ import rasterio
 from rasterio.transform import from_origin
 
 
-def tms_to_geotiff(output: str, bbox, zoom: int, source: str = "Satellite", overwrite: bool = True):
+def tms_to_geotiff(
+    output: str, bbox, zoom: int, source: str = "Satellite", overwrite: bool = True
+):
     """Create a dummy GeoTIFF file representing downloaded imagery."""
     transform = from_origin(0, 0, 1, 1)
     profile = {
@@ -26,7 +28,13 @@ def tms_to_geotiff(output: str, bbox, zoom: int, source: str = "Satellite", over
 class SamGeo:
     """Placeholder class mimicking the API of the real ``SamGeo``."""
 
-    def __init__(self, model_type: str | None = None, checkpoint: str | None = None, device: str | None = None, sam_kwargs=None):
+    def __init__(
+        self,
+        model_type: str | None = None,
+        checkpoint: str | None = None,
+        device: str | None = None,
+        sam_kwargs=None,
+    ):
         self.model_type = model_type
         self.checkpoint = checkpoint
 
@@ -47,5 +55,7 @@ class SamGeo:
         import geopandas as gpd
         from shapely.geometry import Polygon
 
-        gdf = gpd.GeoDataFrame(geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])], crs="EPSG:4326")
+        gdf = gpd.GeoDataFrame(
+            geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])], crs="EPSG:4326"
+        )
         gdf.to_file(out_vector, driver="GPKG")

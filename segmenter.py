@@ -12,7 +12,9 @@ from samgeo.text_sam import LangSAM
 from pipeline.config import PipelineConfig
 
 
-def run_langsam(image_path: str, text_prompts: Iterable[str], config: PipelineConfig) -> str:
+def run_langsam(
+    image_path: str, text_prompts: Iterable[str], config: PipelineConfig
+) -> str:
     """Generate a combined mask for the provided text prompts using LangSAM.
 
     Parameters
@@ -44,7 +46,9 @@ def run_langsam(image_path: str, text_prompts: Iterable[str], config: PipelineCo
             text_threshold=config.text_threshold,
         )
         tmp = os.path.join(config.out_dir, f"langsam_{prompt}.tif")
-        lang_sam.show_anns(cmap="Greens", add_boxes=True, alpha=1, blend=False, output=tmp)
+        lang_sam.show_anns(
+            cmap="Greens", add_boxes=True, alpha=1, blend=False, output=tmp
+        )
         with rasterio.open(tmp) as mask_src:
             mask = mask_src.read(1)
         combined = mask if combined is None else np.logical_or(combined, mask)

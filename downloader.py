@@ -30,6 +30,6 @@ def download_imagery(config: PipelineConfig, *, source: str = "Satellite") -> st
         zoom=config.zoom,
         source=source,
         overwrite=True,
-        crs="EPSG:4326"  # Explicitly set CRS
+        crs="EPSG:4326",  # Explicitly set CRS
     )
     return image_path

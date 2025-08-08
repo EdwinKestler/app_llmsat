@@ -15,10 +15,10 @@ from sklearn.cluster import KMeans
 # === CONFIGURACIÓN ===
 bbox = [-90.015147, 14.916566, -90.010159, 14.919471]
 zoom = 18
-checkpoint_path = 'checkpoints/sam_vit_h_4b8939.pth'
+checkpoint_path = "checkpoints/sam_vit_h_4b8939.pth"
 output_dir = "output"
 os.makedirs(output_dir, exist_ok=True)
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 # === RUTAS DE ARCHIVOS ===
 image_path = os.path.join(output_dir, f"esri_image_{timestamp}.tif")
@@ -26,7 +26,9 @@ mask_path = os.path.join(output_dir, f"sam_mask_all_{timestamp}.tif")
 vector_out = os.path.join(output_dir, f"filtered_segment_{timestamp}.gpkg")
 
 # === 1. Descargar imagen TMS ===
-tms_to_geotiff(output=image_path, bbox=bbox, zoom=zoom, source="Satellite", overwrite=True)
+tms_to_geotiff(
+    output=image_path, bbox=bbox, zoom=zoom, source="Satellite", overwrite=True
+)
 
 # === 2. Segmentación Automática ===
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -49,6 +51,7 @@ with rasterio.open(image_path) as img_src, rasterio.open(mask_path) as mask_src:
 
 from rasterio.features import shapes
 
+
 def get_dominant_rgb(image_patch):
     pixels = image_patch.reshape(-1, 3)
     pixels = pixels[~np.all(pixels == 0, axis=1)]  # quitar fondo negro
@@ -57,12 +60,17 @@ def get_dominant_rgb(image_patch):
     kmeans = KMeans(n_clusters=1).fit(pixels)
     return kmeans.cluster_centers_[0].astype(int)
 
+
 def is_excluded(rgb):
     r, g, b = rgb
-    if b > 34  and g < 54 and r < 31: return True  # Azul: agua
-    if g > 106 and r < 34 and b < 41: return True  # Verde: vegetación
-    if r > 150 and g > 140 and b < 107: return True    # Marrón: tierra
+    if b > 34 and g < 54 and r < 31:
+        return True  # Azul: agua
+    if g > 106 and r < 34 and b < 41:
+        return True  # Verde: vegetación
+    if r > 150 and g > 140 and b < 107:
+        return True  # Marrón: tierra
     return False
+
 
 geoms = []
 props = []
@@ -72,7 +80,9 @@ for geom, value in shapes(mask_data, transform=transform):
         continue
 
     polygon = shape(geom)
-    mask_raster = rasterio.features.geometry_mask([polygon], image_data.shape[1:], transform=transform, invert=True)
+    mask_raster = rasterio.features.geometry_mask(
+        [polygon], image_data.shape[1:], transform=transform, invert=True
+    )
     masked_img = np.transpose(image_data, (1, 2, 0))
     masked_pixels = masked_img[mask_raster]
 
@@ -82,7 +92,9 @@ for geom, value in shapes(mask_data, transform=transform):
     avg_color = get_dominant_rgb(masked_pixels)
     if not is_excluded(avg_color):
         geoms.append(polygon)
-        props.append({"r": int(avg_color[0]), "g": int(avg_color[1]), "b": int(avg_color[2])})
+        props.append(
+            {"r": int(avg_color[0]), "g": int(avg_color[1]), "b": int(avg_color[2])}
+        )
 
 # === 5. Guardar GeoPackage ===
 gdf = gpd.GeoDataFrame(props, geometry=geoms, crs=crs)
@@ -93,12 +105,16 @@ print(f"✅ Segmentación filtrada guardada en: {vector_out}")
 print("🗺️ Mostrando en Leafmap...")
 m = leafmap.Map(center=[(bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2], zoom=zoom)
 m.add_basemap("Esri.WorldImagery")
-m.add_vector(vector_out, layer_name="Segmentación filtrada", style={
-    "color": "#3388ff",
-    "weight": 2,
-    "fillColor": "#ff7800",
-    "fillOpacity": 0.4,
-})
+m.add_vector(
+    vector_out,
+    layer_name="Segmentación filtrada",
+    style={
+        "color": "#3388ff",
+        "weight": 2,
+        "fillColor": "#ff7800",
+        "fillOpacity": 0.4,
+    },
+)
 
 # === 7. Exportar como archivo HTML interactivo ===
 html_path = os.path.join(output_dir, f"segmentacion_mapa_{timestamp}.html")

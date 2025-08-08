@@ -11,27 +11,31 @@ bbox = [-90.015147, 14.916566, -90.010159, 14.919471]  # [west, south, east, nor
 zoom = 18
 output_dir = "output"
 cache_dir = "EsriCache"
-checkpoint_path = 'checkpoints/sam_vit_h_4b8939.pth'
+checkpoint_path = "checkpoints/sam_vit_h_4b8939.pth"
 
 # === Crear carpetas necesarias ===
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(cache_dir, exist_ok=True)
+
 
 # === Función para generar nombre hash del bbox y zoom (único por zona) ===
 def cache_name(bbox, zoom):
     key = f"{bbox}-{zoom}".encode()
     return hashlib.md5(key).hexdigest()
 
+
 # === Rutas ===
 cache_file = os.path.join(cache_dir, f"{cache_name(bbox, zoom)}.tif")
-image_georef = os.path.join(output_dir, 'esri_export_georef.tif')
-mask_path = os.path.join(output_dir, 'segment.tif')
-vector_path = os.path.join(output_dir, 'segment.gpkg')
+image_georef = os.path.join(output_dir, "esri_export_georef.tif")
+mask_path = os.path.join(output_dir, "segment.tif")
+vector_path = os.path.join(output_dir, "segment.gpkg")
 
 # === 1. Descarga o reutiliza desde caché ===
 if not os.path.exists(cache_file):
     print("⏬ Imagen no está en caché. Descargando desde Esri...")
-    tms_to_geotiff(output=cache_file, bbox=bbox, zoom=zoom, source='Satellite', overwrite=True)
+    tms_to_geotiff(
+        output=cache_file, bbox=bbox, zoom=zoom, source="Satellite", overwrite=True
+    )
 else:
     print(f"📂 Usando imagen desde caché: {cache_file}")
 
@@ -46,25 +50,27 @@ with rasterio.open(cache_file) as src:
     crs = CRS.from_epsg(4326)
 
     profile = src.profile.copy()
-    profile.update({
-        'driver': 'GTiff',
-        'height': height,
-        'width': width,
-        'count': count,
-        'dtype': dtype,
-        'crs': crs,
-        'transform': transform
-    })
+    profile.update(
+        {
+            "driver": "GTiff",
+            "height": height,
+            "width": width,
+            "count": count,
+            "dtype": dtype,
+            "crs": crs,
+            "transform": transform,
+        }
+    )
 
-    with rasterio.open(image_georef, 'w', **profile) as dst:
+    with rasterio.open(image_georef, "w", **profile) as dst:
         dst.write(data)
 
 # === 3. SAM Segmentación ===
 print("🧠 Ejecutando SAM...")
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 sam = SamGeo(
-    model_type='vit_h',
+    model_type="vit_h",
     checkpoint=checkpoint_path,
     device=device,
     erosion_kernel=(3, 3),

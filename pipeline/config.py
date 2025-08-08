@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from typing import Iterable, Optional, Any
 import yaml
 
+
 @dataclass
 class PipelineConfig:
     """Configuration options for the processing pipeline."""
+
     bbox: tuple[float, float, float, float]
     zoom: int = 18
     out_dir: str = "output"
@@ -14,6 +16,7 @@ class PipelineConfig:
     sam2_checkpoint: str = "sam2_hiera_l.pt"
     box_threshold: float = 0.24
     text_threshold: float = 0.24
+
 
 def load_config(path: Optional[str] = None, **overrides: Any) -> PipelineConfig:
     """Load a :class:`PipelineConfig` from a YAML file."""
