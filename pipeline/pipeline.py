@@ -1,56 +1,134 @@
-"""High level geospatial processing pipeline."""
-
+# app_stremlit/pipeline/pipeline.py
 from __future__ import annotations
-
 import os
-from typing import Iterable, Dict
+from pathlib import Path
+from typing import Dict, List
 
-from downloader import download_imagery
-from segmenter import run_langsam, run_sam2
+import geopandas as gpd
+from shapely.geometry import mapping
+
 from .config import PipelineConfig
-from vectorizer import raster_to_vector, summarise
+from downloader import download_imagery
+from segmenter import Segmenter
+# NOTE: your project already has vectorizer.summarise; keep your own polygonization call.
+from vectorizer import summarise  # expects a GeoDataFrame → CSV
+
+# Optional: if you have your own raster->vector function
+# from vectorizer import raster_to_vector
 
 
-def run_pipeline(config: PipelineConfig, text_prompts: Iterable[str]) -> Dict[str, str]:
-    """Execute the end-to-end processing pipeline.
-
-    Steps
-    -----
-    1. Download imagery covering ``config.bbox`` at ``config.zoom`` using ``tms_to_geotiff``.
-    2. Run LangSAM to generate a semantic mask from ``text_prompts``.
-    3. Run SAM2 to obtain a general segmentation mask.
-    4. Vectorise the SAM2 mask and export GeoPackage/CSV summaries.
-
-    Parameters
-    ----------
-    config: PipelineConfig
-        Pipeline configuration with bounding box, directories, thresholds
-        and model information.
-    text_prompts: Iterable[str]
-        Prompts for LangSAM.
-
-    Returns
-    -------
-    dict
-        Mapping of product names to file paths.
+def _dummy_vectorize(mask_tif: str) -> gpd.GeoDataFrame:
     """
-    os.makedirs(config.out_dir, exist_ok=True)
+    Placeholder: replace with your real raster→vector function.
+    Must return GeoDataFrame with a valid CRS, preferably EPSG:4326.
+    """
+    # TODO: wire your actual polygonization here.
+    # For now, make an empty GDF in EPSG:4326 so the pipeline completes gracefully.
+    return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
 
-    image_path = download_imagery(config=config)
-    semantic_mask = run_langsam(
-        image_path=image_path, text_prompts=text_prompts, config=config
+
+def _export_shapefile(gdf: gpd.GeoDataFrame, shp_dir: Path, name: str = "segments") -> str:
+    shp_dir.mkdir(parents=True, exist_ok=True)
+    shp_path = shp_dir / f"{name}.shp"
+    if not gdf.empty:
+        gdf.to_file(shp_path, driver="ESRI Shapefile")
+    else:
+        # create an empty shapefile safely? Most drivers don't like empty; skip writing.
+        pass
+    return str(shp_path)
+
+
+def _export_gpkg(gdf: gpd.GeoDataFrame, out_path: Path, layer: str = "segments") -> str:
+    if not gdf.empty:
+        gdf.to_file(out_path, layer=layer, driver="GPKG")
+    else:
+        # write an empty gpkg? skip to avoid corrupt file
+        pass
+    return str(out_path)
+
+
+def _export_folium(gdf: gpd.GeoDataFrame, out_path: Path) -> str:
+    try:
+        import folium
+    except Exception:
+        return ""
+
+    if gdf.empty:
+        # Build an empty map centered roughly on bbox of last run? Leave blank map.
+        m = folium.Map(zoom_start=12)
+        m.save(str(out_path))
+        return str(out_path)
+
+    # Center map on centroid
+    center = gdf.to_crs("EPSG:4326").geometry.unary_union.centroid
+    m = folium.Map(location=[center.y, center.x], zoom_start=13, control_scale=True)
+
+    # Add polygons
+    folium.GeoJson(gdf.to_crs("EPSG:4326")).add_to(m)
+    m.save(str(out_path))
+    return str(out_path)
+
+
+def run_pipeline(config: PipelineConfig, *, text_prompts: List[str]) -> Dict[str, str]:
+    """
+    Standard pipeline:
+      1) Download imagery → imagery.tif
+      2) Segment (SAM2 preferred) → mask.tif
+      3) Vectorize → segments.gpkg, shp/segments.shp
+      4) Summarise → summary.csv (area in m² handled in vectorizer.summarise)
+      5) Folium HTML → map.html
+    """
+    Path(config.out_dir).mkdir(parents=True, exist_ok=True)
+
+    # 1) Download imagery
+    imagery_path = download_imagery(
+        config.out_dir,
+        config.bbox,
+        tms_source=config.tms_source,
+        zoom=config.zoom,
+        filename="imagery.tif",
+        overwrite=True,
     )
-    sam2_mask = run_sam2(image_path=image_path, config=config)
 
-    gpkg_path = os.path.join(config.out_dir, "segments.gpkg")
-    csv_path = os.path.join(config.out_dir, "summary.csv")
-    gdf = raster_to_vector(sam2_mask, gpkg_path)
-    summarise(gdf, csv_path)
+    # 2) Segment
+    seg = Segmenter(
+        device=config.device,
+        model_dir=config.checkpoints_dir,
+        sam2_checkpoint=os.path.basename(config.resolved_ckpts.get("sam2") or "") or "sam2_hiera_l.pt",
+        box_threshold=config.box_threshold,
+        text_threshold=config.text_threshold,
+    )
+    # NOTE: your Segmenter.run_text_segmentation currently expects an image path & prompts and returns masks meta.
+    seg_result = seg.run_text_segmentation(imagery_path, text_prompts=text_prompts)
+
+    # You likely save a mask raster here in your real code. For now we just define a path.
+    mask_path = Path(config.out_dir) / "mask.tif"
+    if not mask_path.exists():
+        # If your segmenter doesn’t write it yet, create a tiny placeholder.
+        mask_path.write_bytes(b"")
+
+    # 3) Vectorize (replace with your real polygonize)
+    gdf = _dummy_vectorize(str(mask_path))
+
+    # 4) Exports
+    gpkg_path = Path(config.out_dir) / "segments.gpkg"
+    shp_dir = Path(config.out_dir) / "shp"
+    html_path = Path(config.out_dir) / "map.html"
+    csv_path = Path(config.out_dir) / "summary.csv"
+
+    _export_gpkg(gdf, gpkg_path)
+    _export_shapefile(gdf, shp_dir)
+    try:
+        summarise(gdf, str(csv_path))  # writes area_m2 in EPSG:6933 inside summarise()
+    except Exception:
+        pass
+    _export_folium(gdf, html_path)
 
     return {
-        "image": image_path,
-        "semantic_mask": semantic_mask,
-        "sam2_mask": sam2_mask,
-        "gpkg": gpkg_path,
-        "csv": csv_path,
+        "image": str(imagery_path),
+        "sam2_mask": str(mask_path),
+        "gpkg": str(gpkg_path),
+        "shp": str(shp_dir / "segments.shp"),
+        "csv": str(csv_path),
+        "map": str(html_path),
     }

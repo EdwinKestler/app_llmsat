@@ -21,6 +21,9 @@ secrets.toml
 output/
 data/
 
+# Streamlit cache
+.streamlit/
+
 # Model checkpoints
 checkpoints/*
 !checkpoints/.gitkeep  # Keep empty checkpoints directory if needed
