@@ -9,13 +9,17 @@ import yaml
 class PipelineConfig:
     """Configuration options for the processing pipeline."""
 
-    bbox: Iterable[float] = (0.0, 0.0, 0.0, 0.0)
-    zoom: int = 18
-    out_dir: str = "data"
-    model_dir: str = "models"
-    box_threshold: float = 0.24
-    text_threshold: float = 0.24
-    sam2_checkpoint: str = "sam2_hiera_l.pt"
+    from pipeline import PipelineConfig
+
+config = PipelineConfig(
+    bbox=(-74.01, 40.70, -73.99, 40.72),  # west, south, east, north (EPSG:4326)
+    zoom=18,
+    out_dir="output",
+    model_dir="checkpoints",
+    sam2_checkpoint="sam2_hiera_l.pt",
+    box_threshold=0.24,
+    text_threshold=0.24,
+)
 
 
 def load_config(path: Optional[str] = None, **overrides: Any) -> PipelineConfig:
