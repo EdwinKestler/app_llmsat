@@ -1,4 +1,5 @@
 # app_stremlit/tests/test_pipeline.py
+
 import os
 from pathlib import Path
 import geopandas as gpd
@@ -8,6 +9,8 @@ from shapely.geometry import Polygon
 from pipeline.config import PipelineConfig
 from pipeline.pipeline import run_pipeline
 from vectorizer import summarise
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 @pytest.mark.skip(reason="Provide a tiny bbox & mocked downloader in CI; enable locally for end-to-end.")
 def test_pipeline_smoke(tmp_path):

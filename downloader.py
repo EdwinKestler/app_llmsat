@@ -1,8 +1,7 @@
 # app_stremlit/downloader.py
 from __future__ import annotations
-import os
 from pathlib import Path
-from typing import Optional
+from typing import Sequence
 
 try:
     from samgeo import tms_to_geotiff  # real
@@ -12,9 +11,19 @@ except Exception:
     _USING_STUB = True
 
 
+def _normalize_bbox_to_list(bbox: Sequence[float]) -> list[float]:
+    if bbox is None or len(bbox) != 4:
+        raise ValueError("bbox must be a sequence of 4 numbers: [xmin, ymin, xmax, ymax]")
+    xmin, ymin, xmax, ymax = map(float, bbox)
+    # normalize order in case user flips coords
+    xmin, xmax = min(xmin, xmax), max(xmin, xmax)
+    ymin, ymax = min(ymin, ymax), max(ymin, ymax)
+    return [xmin, ymin, xmax, ymax]
+
+
 def download_imagery(
     out_dir: str,
-    bbox: tuple[float, float, float, float],
+    bbox: Sequence[float],
     *,
     tms_source: str = "satellite",
     zoom: int = 16,
@@ -23,14 +32,16 @@ def download_imagery(
 ) -> str:
     """
     Downloads (or stubs) TMS imagery into a GeoTIFF at out_dir/filename.
+    Ensures bbox is a LIST in [xmin, ymin, xmax, ymax] order for samgeo.
     """
     out_path = Path(out_dir) / filename
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # The real samgeo.tms_to_geotiff accepts (source, bbox, zoom, output)
+    bbox_list = _normalize_bbox_to_list(bbox)
+
     tms_to_geotiff(
         source=tms_source,
-        bbox=bbox,
+        bbox=bbox_list,   # <-- samgeo requires list
         zoom=zoom,
         output=str(out_path),
         overwrite=overwrite,

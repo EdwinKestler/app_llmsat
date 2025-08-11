@@ -3,23 +3,36 @@ from __future__ import annotations
 import geopandas as gpd
 import pandas as pd
 from pathlib import Path
+import rasterio
+from rasterio.features import shapes
+from shapely.geometry import shape
 
 def raster_to_vector(raster_path: str, out_gpkg: str, layer: str = "segments") -> gpd.GeoDataFrame:
     """
-    IMPLEMENTATION NOTE:
-    Keep your existing polygonization logic here (not shown to avoid duplication).
-    This stub assumes you've already built a GeoDataFrame `gdf` in CRS of the raster.
-
-    Replace this stub with your current implementation if present.
+    Convert a raster mask to vector polygons and save to GeoPackage.
     """
-    raise NotImplementedError("raster_to_vector() should be implemented in your codebase.")
+    with rasterio.open(raster_path) as src:
+        if src.count > 1:
+            raise ValueError("Expected single-band raster")
+        mask = src.read(1)  # Read the first band
+        transform = src.transform
+        crs = src.crs or "EPSG:4326"  # Default to EPSG:4326 if no CRS
+
+        # Convert raster to shapes
+        results = shapes(mask, transform=transform)
+        geometries = [shape(geom) for geom, value in results if value != 0]  # Exclude background (0)
+
+    gdf = gpd.GeoDataFrame(geometry=geometries, crs=crs)
+    if not gdf.empty:
+        Path(out_gpkg).parent.mkdir(parents=True, exist_ok=True)
+        gdf.to_file(out_gpkg, layer=layer, driver="GPKG")
+    
+    return gdf
 
 def summarise(gdf: gpd.GeoDataFrame, out_csv: str) -> pd.DataFrame:
     """
     Create a summary CSV of polygon areas in square metres by reprojecting
     to a metre-based CRS before computing area.
-
-    MODIFIED (~lines 25–55): reprojection to EPSG:6933 for area in m².
     """
     if gdf.crs is None:
         raise ValueError("Input GeoDataFrame has no CRS; cannot compute area.")

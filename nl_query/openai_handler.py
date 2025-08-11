@@ -77,7 +77,7 @@ def ask(
     for seg in segments:
         seg_out_dir = os.path.join(out_dir, seg)
         cfg: PipelineConfig = load_config(
-            bbox=tuple(bbox),
+            bbox=list(bbox),
             out_dir=seg_out_dir,
             device=device,
             checkpoints_dir=checkpoints_dir,

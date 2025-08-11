@@ -11,7 +11,7 @@ from .config import PipelineConfig
 from downloader import download_imagery
 from segmenter import Segmenter
 # NOTE: your project already has vectorizer.summarise; keep your own polygonization call.
-from vectorizer import summarise  # expects a GeoDataFrame → CSV
+from vectorizer import raster_to_vector, summarise  # Updated import
 
 # Optional: if you have your own raster->vector function
 # from vectorizer import raster_to_vector
@@ -107,8 +107,30 @@ def run_pipeline(config: PipelineConfig, *, text_prompts: List[str]) -> Dict[str
         # If your segmenter doesn’t write it yet, create a tiny placeholder.
         mask_path.write_bytes(b"")
 
-    # 3) Vectorize (replace with your real polygonize)
-    gdf = _dummy_vectorize(str(mask_path))
+    # 3) Vectorize
+    gpkg_path = Path(config.out_dir) / "segments.gpkg"
+    gdf = raster_to_vector(str(mask_path), str(gpkg_path))  # Replace _dummy_vectorize
+
+    # 4) Exports
+    shp_dir = Path(config.out_dir) / "shp"
+    html_path = Path(config.out_dir) / "map.html"
+    csv_path = Path(config.out_dir) / "summary.csv"
+
+    _export_shapefile(gdf, shp_dir)
+    _export_folium(gdf, html_path)
+    try:
+        summarise(gdf, str(csv_path))
+    except Exception:
+        pass
+
+    return {
+        "image": str(imagery_path),
+        "sam2_mask": str(mask_path),
+        "gpkg": str(gpkg_path),
+        "shp": str(shp_dir / "segments.shp"),
+        "csv": str(csv_path),
+        "map": str(html_path),
+    }
 
     # 4) Exports
     gpkg_path = Path(config.out_dir) / "segments.gpkg"

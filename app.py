@@ -18,7 +18,7 @@ st.title("🌍 Geospatial Segmentation Query Tool")
 st.sidebar.header("Configuration")
 out_dir = st.sidebar.text_input("Output directory", value="data")
 device = st.sidebar.selectbox("Device", options=["cuda", "cpu"], index=0 if torch.cuda.is_available() else 1)
-model_dir = st.sidebar.text_input("Model directory", value="checkpoints")
+checkpoints_dir = st.sidebar.text_input("Checkpoints directory", value="checkpoints")  # renamed for clarity
 sam2_checkpoint = st.sidebar.text_input("SAM2 checkpoint filename", value="sam2_hiera_l.pt")
 box_threshold = st.sidebar.slider("Box threshold", min_value=0.0, max_value=1.0, value=0.24, step=0.01)
 text_threshold = st.sidebar.slider("Text threshold", min_value=0.0, max_value=1.0, value=0.24, step=0.01)
@@ -27,13 +27,18 @@ st.sidebar.markdown("---")
 st.sidebar.header("ROI (EPSG:4326)")
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    west = st.number_input("West (λ min)", value=-90.6)
-    east = st.number_input("East (λ max)", value=-90.5)
+    west = float(st.number_input("West (xmin, λ min)", value=-90.6))
+    east = float(st.number_input("East (xmax, λ max)", value=-90.5))
 with col2:
-    south = st.number_input("South (φ min)", value=14.58)
-    north = st.number_input("North (φ max)", value=14.66)
+    south = float(st.number_input("South (ymin, φ min)", value=14.58))
+    north = float(st.number_input("North (ymax, φ max)", value=14.66))
 
-bbox = (west, south, east, north)
+# --- NEW (~lines 55–70): normalize & coerce to list for samgeo ---
+xmin = min(west, east)
+xmax = max(west, east)
+ymin = min(south, north)
+ymax = max(south, north)
+bbox_list = [xmin, ymin, xmax, ymax]  # samgeo requires list, not tuple
 
 # CUDA status
 if device == "cuda":
@@ -52,11 +57,11 @@ with tab1:
         try:
             chart, df = ask(
                 question,
-                bbox,
+                bbox_list,                 # <- pass list
                 out_dir=out_dir,
                 use_altair=use_altair,
                 device=device,
-                checkpoints_dir=model_dir,   # <— was model_dir=...
+                checkpoints_dir=checkpoints_dir,
                 sam2_checkpoint=sam2_checkpoint,
                 box_threshold=box_threshold,
                 text_threshold=text_threshold,
@@ -73,10 +78,10 @@ with tab2:
     if st.button("Run Manual Pipeline"):
         try:
             cfg = load_config(
-                bbox=bbox,
+                bbox=bbox_list,             # <- pass list
                 out_dir=out_dir,
                 device=device,
-                checkpoints_dir=model_dir,   # <— was model_dir=...
+                checkpoints_dir=checkpoints_dir,
                 sam2_checkpoint=sam2_checkpoint,
                 box_threshold=box_threshold,
                 text_threshold=text_threshold,
