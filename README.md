@@ -1,54 +1,83 @@
-# 🛰️ Proyecto de Segmentación Visual de Imágenes Satelitales
+# LLMSat - Geospatial Segmentation Query Tool
 
-Este programa automatiza el proceso de análisis de imágenes satelitales para identificar y mostrar en un mapa diferentes tipos de elementos visibles en una zona.
+Automated satellite imagery analysis pipeline that downloads imagery, segments it using SAM2 and LangSAM, vectorises the results, and lets users query segments via natural language (powered by OpenAI).
 
-## 📌 ¿Qué hace este programa?
+## Features
 
-1. **Descarga automática de una imagen satelital**  
-   Toma una “foto desde el espacio” de un área específica usando un servicio de mapas (Esri Satellite).
+- **Satellite imagery download** — fetches tiles for a bounding box via TMS and exports a GeoTIFF.
+- **Semantic segmentation (LangSAM)** — finds objects by text prompt (trees, water, buildings, roads).
+- **General segmentation (SAM2)** — detects all visually distinct regions in the image.
+- **Vectorisation** — converts raster masks to GeoPackage polygons with area summaries.
+- **Natural language queries** — ask questions like *"What is the total area of buildings and trees?"* and get a chart + table.
+- **Two interfaces** — Streamlit web UI (`app.py`) and a CLI (`cli.py`).
 
-2. **Busca objetos en la imagen según palabras clave**  
-   El sistema entiende indicaciones como “árboles”, “agua”, “edificios” o “caminos”, y encuentra esas zonas en la imagen automáticamente.
+## Requirements
 
-3. **Segmentación general automática (SAM)**  
-   Además de las búsquedas por palabra, detecta cualquier otro objeto visual destacable.  
-   Evita duplicaciones, excluyendo áreas ya etiquetadas.
+- Python 3.11+
+- SAM2 checkpoint file in the `checkpoints/` directory
 
-4. **Crea un mapa interactivo**  
-   Genera una página web donde puedes ver el mapa con cada capa marcada por colores.  
-   Puedes activar/desactivar las capas y explorar los datos visualmente.
+## Setup
 
-5. **Calcula porcentajes de cobertura**  
-   Mide qué porcentaje del área cubre cada tipo de objeto (ej. “15% edificios”).  
-   Esta información se muestra visualmente en el mapa.
+```bash
+# Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
 
-6. **Exporta resultados**  
-   Guarda:
-   - Un archivo `.csv` con los porcentajes y áreas por tipo de objeto.
-   - Un archivo `.html` con el mapa interactivo.
-   - Archivos geoespaciales `.gpkg` y `.shp` para usar en software de mapas (QGIS, ArcGIS, etc).
+# Install dependencies
+pip install -r requirements.txt
 
-## 🗂️ Archivos generados
+# Copy and configure your environment variables
+cp .env.example .env   # then add your OPENAI_API_KEY
+```
 
-- `output/esri_image_<fecha>.tif`: imagen satelital base.
-- `output/segment_<clase>_<fecha>.gpkg`: zonas segmentadas por tipo (árboles, agua, etc.).
-- `output/sam_segment_<fecha>.gpkg`: otras zonas destacadas automáticamente.
-- `output/segmentacion_mapa_<fecha>.html`: mapa interactivo.
-- `output/coverage_summary_<fecha>.csv`: tabla resumen de áreas y porcentajes.
+## Usage
 
-## 💡 Ejemplo de resumen generado
+### Streamlit UI
 
-Árboles: 12.34%
-Agua: 8.91%
-Edificios: 20.10%
-Caminos: 15.67%
-Otros objetos (SAM): 43.00%
+```bash
+streamlit run app.py
+```
 
-Este resumen también aparece como una caja flotante en la esquina del mapa web generado.
+Configure bounding box, model paths, and ask natural-language questions from the sidebar.
 
-## ✅ Requisitos para ejecutar
-- Python 3.9+
-- Instalar librerías: `samgeo`, `leafmap`, `rasterio`, `geopandas`, `torch`, `shapely`
+### CLI
 
-## 👨‍💻 Autor
-Desarrollado por Edwin Kestler, para proyectos de agricultura de precisión, supervisión urbana y análisis ambiental.
+```bash
+python cli.py --bbox -74.01 40.70 -73.99 40.72 --prompt "trees" --prompt "buildings"
+```
+
+Options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bbox` | *(required)* | West South East North in EPSG:4326 |
+| `--out-dir` | `output` | Directory for all outputs |
+| `--prompt` | *(repeatable)* | Text prompt(s) for LangSAM |
+
+## Outputs
+
+| File | Description |
+|------|-------------|
+| `output/s2harm_rgb_saa.tif` | Downloaded satellite imagery |
+| `output/langsam_mask.tif` | Combined LangSAM semantic mask |
+| `output/sam2_mask.tif` | SAM2 general segmentation mask |
+| `output/segments.gpkg` | Vectorised polygons (GeoPackage) |
+| `output/summary.csv` | Area summary per polygon |
+
+## Configuration
+
+Pipeline settings can be passed programmatically via `PipelineConfig` or loaded from a YAML file using `load_config()`. Key parameters:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `bbox` | — | Bounding box (west, south, east, north) |
+| `zoom` | `18` | Tile zoom level |
+| `out_dir` | `output` | Output directory |
+| `model_dir` | `checkpoints` | Directory containing model weights |
+| `sam2_checkpoint` | `sam2_hiera_l.pt` | SAM2 checkpoint filename |
+| `box_threshold` | `0.24` | LangSAM box detection threshold |
+| `text_threshold` | `0.24` | LangSAM text detection threshold |
+
+## Author
+
+Developed by Edwin Kestler for precision agriculture, urban monitoring, and environmental analysis.
