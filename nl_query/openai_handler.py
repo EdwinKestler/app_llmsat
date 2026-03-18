@@ -36,7 +36,7 @@ def parse_user_text(question: str, *, client: Optional[OpenAI] = None) -> List[s
     if client is not None:
         try:
             response = client.responses.create(
-                model="gpt-4o-mini",
+                model="gpt-5.4-nano",
                 input=question,
                 tools=[
                     {

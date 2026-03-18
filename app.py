@@ -95,7 +95,7 @@ def _vision_analysis(
     area_context = "\n".join(area_lines) or "No area data available."
 
     response = client.responses.create(
-        model="gpt-4o-mini",
+        model="gpt-5.4-nano",
         input=[
             {
                 "role": "system",
@@ -375,6 +375,74 @@ if st.session_state.imagery_loaded:
                 st.info("No Open Buildings data for this area — using SAM3 text prompts only.")
         except Exception as e:
             st.info(f"Open Buildings preview unavailable — using SAM3 text prompts only. ({e})")
+
+    # Show OSM road preview for road prompts
+    if "road" in selected:
+        try:
+            from osm_roads import query_roads, buffer_roads, roads_summary
+            _rd_gdf = query_roads(st.session_state.bbox)
+            _rd_info = roads_summary(_rd_gdf)
+            if _rd_info["count"] > 0:
+                st.success(
+                    f"OpenStreetMap: **{_rd_info['count']}** road segments in this area. "
+                    f"These will be rasterized directly as the road mask."
+                )
+
+                with st.expander("Preview: OSM road network", expanded=True):
+                    preview_rgb = st.session_state.rgb.copy()
+                    img_path = st.session_state.image_path
+
+                    with rasterio.open(img_path) as src:
+                        transform = src.transform
+                        img_h, img_w = src.height, src.width
+
+                    from rasterio.transform import rowcol
+                    from PIL import ImageDraw
+
+                    pil_img = Image.fromarray(preview_rgb)
+                    draw = ImageDraw.Draw(pil_img, "RGBA")
+
+                    # Road type colors
+                    _road_colors = {
+                        "primary": (255, 200, 0, 180),
+                        "secondary": (255, 150, 0, 160),
+                        "tertiary": (255, 100, 0, 140),
+                        "residential": (200, 200, 200, 140),
+                        "service": (150, 150, 150, 120),
+                    }
+
+                    drawn = 0
+                    for _, row in _rd_gdf.iterrows():
+                        geom = row.geometry
+                        if geom is None or geom.is_empty:
+                            continue
+                        coords = list(geom.coords)
+                        pixel_coords = []
+                        for lon, lat in coords:
+                            r, c = rowcol(transform, lon, lat)
+                            r = max(0, min(img_h - 1, int(r)))
+                            c = max(0, min(img_w - 1, int(c)))
+                            pixel_coords.append((c, r))
+
+                        if len(pixel_coords) >= 2:
+                            color = _road_colors.get(row["highway"], (200, 200, 0, 140))
+                            width_px = max(1, int(row["width_m"] * 0.8))
+                            draw.line(pixel_coords, fill=color, width=width_px)
+                            drawn += 1
+
+                    preview_arr = np.array(pil_img)
+                    col_prev, col_stats = st.columns([3, 1])
+                    with col_prev:
+                        st.image(preview_arr, caption=f"{drawn} road segments from OpenStreetMap",
+                                 width="stretch")
+                    with col_stats:
+                        st.metric("Roads", f"{_rd_info['count']:,}")
+                        for rtype, count in list(_rd_info["types"].items())[:5]:
+                            st.caption(f"{rtype}: {count}")
+            else:
+                st.info("No OSM road data for this area — using SAM3 text prompts only.")
+        except Exception as e:
+            st.info(f"OSM road preview unavailable — using SAM3 text prompts only. ({e})")
 
     if not selected:
         st.warning("Select at least one segment type.")

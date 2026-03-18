@@ -6,14 +6,29 @@ geopandas>=0.14
 numpy>=1.26
 rasterio>=1.3
 shapely>=2.0
+Pillow>=10.0
 
-# NL query
+# Interactive map
+folium>=0.15
+streamlit-folium>=0.20
+
+# NL query & vision analysis
 openai>=1.0
 python-dotenv>=1.0
 
 # Config
 pyyaml>=6.0
 
-# Segmentation
+# Segmentation (SAM3)
 segment-geospatial[samgeo2,samgeo3]>=1.2
 transformers<5  # GroundingDINO incompatible with transformers 5.x
+psutil>=5.9
+
+# Open Buildings spatial queries
+duckdb>=0.9
+
+# System (install via apt: libgdal-dev gdal-bin)
+# GDAL  # version must match system libgdal
+
+# Visualization
+matplotlib>=3.7
