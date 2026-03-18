@@ -211,6 +211,25 @@ Multi-layer environmental data overlay using satellite products from the compani
 | Temperature (ERA5) | ECMWF | 9km |
 | Weather Stations | Weather Underground | point (14 stations) |
 
+## License
+
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+
+This means you are free to:
+- **Use** — for academic, research, educational, and personal projects
+- **Study** — read and learn from the source code
+- **Modify** — adapt the code for your own needs
+- **Distribute** — share copies with others
+
+Under these conditions:
+- **Share alike** — if you modify and distribute this software (including deploying it as a web service), you must release your modifications under the same AGPL-3.0 license
+- **Disclose source** — if you deploy this software as a network service, you must make the complete source code available to users of that service
+- **Attribution** — you must give appropriate credit and indicate changes made
+
+**For commercial licensing** (proprietary use without source disclosure requirements), contact the author.
+
+See [LICENSE](LICENSE) for the full license text.
+
 ## Author
 
 Developed by Edwin Kestler for precision agriculture, urban monitoring, and environmental analysis.

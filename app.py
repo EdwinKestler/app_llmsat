@@ -1,3 +1,7 @@
+# LLMSat – Geospatial Segmentation & Analysis
+# Copyright (C) 2026 Edwin Kestler
+# Licensed under AGPL-3.0 — see LICENSE file for details.
+
 """LLMSat – Streamlit UI with three-step workflow + settings.
 
 Tab 1 (Main):
