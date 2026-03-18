@@ -86,6 +86,15 @@ def map_keywords_to_segments(keywords: Iterable[str]) -> List[str]:
 
 
 def _segment_file(out_dir: str, segment: str) -> Optional[Path]:
+    """Find the GeoPackage for *segment* inside *out_dir*.
+
+    Callers pass the per-segment directory (e.g. ``output/tree``) so we
+    look for ``segments.gpkg`` directly there.
+    """
+    gpkg = Path(out_dir) / "segments.gpkg"
+    if gpkg.exists():
+        return gpkg
+    # Fallback: legacy naming convention
     files = sorted(Path(out_dir).glob(f"segment_{segment}_*.gpkg"))
     return files[-1] if files else None
 
@@ -95,6 +104,8 @@ def fetch_segment_data(segment: str, out_dir: str) -> Tuple[gpd.GeoDataFrame, fl
     if gpkg is None:
         raise FileNotFoundError(f"No GeoPackage found for segment '{segment}' in '{out_dir}'")
     gdf = gpd.read_file(gpkg)
+    if gdf.empty:
+        return gdf, 0.0
     utm_crs = _estimate_utm_crs(gdf)
     area = gdf.to_crs(utm_crs).geometry.area.sum()
     return gdf, area
@@ -115,9 +126,9 @@ def ask(
     if config is None:
         config = load_config(bbox=bbox, out_dir=out_dir)
 
-    if any(_segment_file(config.out_dir, s) is None for s in segments):
-        for seg in segments:
-            seg_out_dir = os.path.join(config.out_dir, seg)
+    for seg in segments:
+        seg_out_dir = os.path.join(config.out_dir, seg)
+        if _segment_file(seg_out_dir, seg) is None:
             seg_config = PipelineConfig(**{**config.__dict__, "out_dir": seg_out_dir})
             run_pipeline(seg_config, text_prompts=[seg])
 
@@ -128,7 +139,7 @@ def ask(
 
     df = pd.DataFrame(data)
     chart = alt.Chart(df).mark_bar().encode(x="segment", y="area_m2")
-    return chart, df
+    return chart, df, segments
 
 
 def _main() -> None:

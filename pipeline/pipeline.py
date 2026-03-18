@@ -6,7 +6,7 @@ import os
 from typing import Iterable, Dict
 
 from downloader import download_imagery
-from segmenter import run_langsam, run_sam2
+from segmenter import run_text_segmentation, run_auto_segmentation
 from .config import PipelineConfig
 from vectorizer import raster_to_vector, summarise
 
@@ -16,18 +16,10 @@ def run_pipeline(config: PipelineConfig, text_prompts: Iterable[str]) -> Dict[st
 
     Steps
     -----
-    1. Download imagery covering ``config.bbox`` at ``config.zoom`` using ``tms_to_geotiff``.
-    2. Run LangSAM to generate a semantic mask from ``text_prompts``.
-    3. Run SAM2 to obtain a general segmentation mask.
-    4. Vectorise the SAM2 mask and export GeoPackage/CSV summaries.
-
-    Parameters
-    ----------
-    config: PipelineConfig
-        Pipeline configuration with bounding box, directories, thresholds
-        and model information.
-    text_prompts: Iterable[str]
-        Prompts for LangSAM.
+    1. Download imagery covering ``config.bbox`` at ``config.zoom``.
+    2. Run SAM3 text-prompted segmentation for each prompt.
+    3. Run SAM3 auto-segmentation over the bounding box.
+    4. Vectorise the **text-prompted** mask and export GeoPackage/CSV.
 
     Returns
     -------
@@ -37,18 +29,21 @@ def run_pipeline(config: PipelineConfig, text_prompts: Iterable[str]) -> Dict[st
     os.makedirs(config.out_dir, exist_ok=True)
 
     image_path = download_imagery(config=config)
-    semantic_mask = run_langsam(image_path=image_path, text_prompts=text_prompts, config=config)
-    sam2_mask = run_sam2(image_path=image_path, config=config)
+    semantic_mask = run_text_segmentation(
+        image_path=image_path, text_prompts=text_prompts, config=config,
+    )
+    auto_mask = run_auto_segmentation(image_path=image_path, config=config)
 
+    # Vectorise the TEXT-PROMPTED mask (not the auto mask)
     gpkg_path = os.path.join(config.out_dir, "segments.gpkg")
     csv_path = os.path.join(config.out_dir, "summary.csv")
-    gdf = raster_to_vector(sam2_mask, gpkg_path)
+    gdf = raster_to_vector(semantic_mask, gpkg_path)
     summarise(gdf, csv_path)
 
     return {
         "image": image_path,
         "semantic_mask": semantic_mask,
-        "sam2_mask": sam2_mask,
+        "auto_mask": auto_mask,
         "gpkg": gpkg_path,
         "csv": csv_path,
     }

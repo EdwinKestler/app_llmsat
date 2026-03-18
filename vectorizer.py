@@ -38,12 +38,20 @@ def raster_to_vector(raster_path: str, out_path: str) -> gpd.GeoDataFrame:
 
     gdf = gpd.GeoDataFrame(geometry=geoms, crs=crs)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    gdf.to_file(out_path, driver="GPKG")
+    if gdf.empty:
+        # Write an empty GeoPackage so downstream code finds the file
+        gdf.to_file(out_path, driver="GPKG")
+    else:
+        gdf.to_file(out_path, driver="GPKG")
     return gdf
 
 
 def summarise(gdf: gpd.GeoDataFrame, out_csv: str) -> pd.DataFrame:
     """Create a summary CSV of polygon areas in square metres."""
+    if gdf.empty:
+        df = pd.DataFrame(columns=["area_m2"])
+        df.to_csv(out_csv, index=False)
+        return gdf
     summary = gdf.copy()
     centroid = summary.geometry.union_all().centroid
     zone = int((centroid.x + 180) / 6) + 1

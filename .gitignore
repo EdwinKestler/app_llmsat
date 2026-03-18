@@ -31,6 +31,11 @@ checkpoints/*
 # Cached imagery
 EsriCache/
 
+# Open Buildings data (large CSV tiles, download separately)
+openbuildings/*.csv.gz
+openbuildings/*.csv
+openbuildings/*Zone.Identifier
+
 # Archived/experimental files
 old_files/
 
