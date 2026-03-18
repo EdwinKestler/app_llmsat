@@ -11,9 +11,8 @@ def test_pipeline_config_defaults():
     assert cfg.zoom == 18
     assert cfg.out_dir == "output"
     assert cfg.model_dir == "checkpoints"
-    assert cfg.sam2_checkpoint == "sam2_hiera_l.pt"
-    assert cfg.box_threshold == 0.24
-    assert cfg.text_threshold == 0.24
+    assert cfg.box_threshold == 0.5
+    assert cfg.text_threshold == 0.5
 
 
 def test_pipeline_config_custom():

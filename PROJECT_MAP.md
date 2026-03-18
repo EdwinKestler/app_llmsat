@@ -4,10 +4,12 @@
 
 ```
 app_llmsat/
-├── app.py                  # Streamlit web UI — 3-step workflow
+├── app.py                  # Streamlit web UI — 3-step workflow + Settings tab
 ├── cli.py                  # Command-line interface
+├── config_manager.py       # Centralized config: load/save config.json + .env secrets
+├── config.json             # User settings (not committed) — editable via Settings tab
 ├── requirements.txt        # pip dependencies
-├── .env                    # API keys: OPENAI_API_KEY, HF_TOKEN (not committed)
+├── .env                    # Secrets only: API keys, tokens (not committed)
 ├── .env.example            # Template for .env
 │
 ├── pipeline/               # Core processing pipeline
@@ -129,7 +131,8 @@ app_llmsat/
 | `run_auto_segmentation()` | `segmenter.py` | SAM3 auto-segment entire bbox |
 | `_rasterize_open_buildings()` | `segmenter.py` | Burn Open Buildings polygons directly into mask |
 | `_rasterize_osm_roads()` | `segmenter.py` | Burn OSM road polygons directly into mask |
-| `query_buildings()` | `open_buildings.py` | DuckDB query of Open Buildings tiles for bbox |
+| `query_buildings()` | `open_buildings.py` | DuckDB query of relevant Open Buildings tiles for bbox |
+| `_find_relevant_tiles()` | `open_buildings.py` | Spatial filter — only scan tiles overlapping bbox |
 | `query_roads()` | `osm_roads.py` | Overpass API query for OSM roads in bbox |
 | `buffer_roads()` | `osm_roads.py` | Buffer linestrings to road-width polygons |
 | `raster_to_vector()` | `vectorizer.py` | Binary mask → GeoPackage polygons |
@@ -137,7 +140,8 @@ app_llmsat/
 | `ask()` | `nl_query/openai_handler.py` | Parse question → run pipeline → return chart + df |
 | `parse_user_text()` | `nl_query/openai_handler.py` | Extract segment keywords (OpenAI or regex) |
 | `fetch_segment_data()` | `nl_query/openai_handler.py` | Load GeoPackage, compute total area |
-| `_vision_analysis()` | `app.py` | Send images to GPT-5.4-nano for analysis |
+| `_build_image_message()` | `app.py` | Build multi-image message for GPT vision chat |
+| `config_manager` | `config_manager.py` | Load/save config.json + .env secrets |
 
 ## Entry Points
 

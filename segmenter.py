@@ -273,6 +273,9 @@ def run_text_segmentation(
         profile = src.profile
 
     combined = None
+    # Collect prompts that need SAM3 (not handled by data sources)
+    sam3_prompts = []
+
     for prompt in text_prompts:
 
         # For building prompts: rasterize Open Buildings directly
@@ -299,9 +302,15 @@ def run_text_segmentation(
                     combined = mask if combined is None else np.logical_or(combined, mask)
                     continue
 
-        # Fallback: SAM3 text prompt
+        # Collect for SAM3 batch processing
+        sam3_prompts.append(prompt)
+
+    # Run SAM3 once for all remaining prompts (set_image only once)
+    if sam3_prompts:
         sam = _get_sam3()
-        sam.set_image(image_path)
+        sam.set_image(image_path)  # expensive — called once, not per prompt
+
+    for prompt in sam3_prompts:
         sam.generate_masks(prompt=prompt)
 
         if not sam.masks:

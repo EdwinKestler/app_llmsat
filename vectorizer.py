@@ -38,11 +38,7 @@ def raster_to_vector(raster_path: str, out_path: str) -> gpd.GeoDataFrame:
 
     gdf = gpd.GeoDataFrame(geometry=geoms, crs=crs)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    if gdf.empty:
-        # Write an empty GeoPackage so downstream code finds the file
-        gdf.to_file(out_path, driver="GPKG")
-    else:
-        gdf.to_file(out_path, driver="GPKG")
+    gdf.to_file(out_path, driver="GPKG")
     return gdf
 
 

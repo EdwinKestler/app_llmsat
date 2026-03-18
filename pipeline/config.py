@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, Optional, Any
+from dataclasses import dataclass, field
+from typing import Optional, Any
 import yaml
+
 
 @dataclass
 class PipelineConfig:
@@ -11,9 +12,9 @@ class PipelineConfig:
     zoom: int = 18
     out_dir: str = "output"
     model_dir: str = "checkpoints"
-    sam2_checkpoint: str = "sam2_hiera_l.pt"
-    box_threshold: float = 0.24
-    text_threshold: float = 0.24
+    box_threshold: float = 0.5
+    text_threshold: float = 0.5
+
 
 def load_config(path: Optional[str] = None, **overrides: Any) -> PipelineConfig:
     """Load a :class:`PipelineConfig` from a YAML file."""

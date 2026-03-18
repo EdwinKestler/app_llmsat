@@ -67,16 +67,24 @@ The app follows a three-step workflow:
 - Preview the satellite image and area dimensions.
 
 #### Step 2: Select Segments & Run SAM3
-- Pick segment types via chips: Tree, Building, Water, Road, or add custom prompts.
-- If Open Buildings data is available, a preview shows known building footprints overlaid on the satellite image before running SAM3.
+- Pick segment types via chips: Tree, Building, Water, Road.
+- Choose additional SAM3-compatible terms from a curated dropdown (car, solar panel, swimming pool, crop, etc.).
+- Customize overlay colors per segment via the color picker expander.
+- If Open Buildings data is available, a preview shows known building footprints overlaid on the satellite image.
+- If OSM road data is available, a preview shows the road network before segmentation.
 - Click **Run Segmentation** to generate masks with progressive status updates per segment.
 
 #### Step 3: Results & Analysis
 - Side-by-side satellite image and segmentation overlay with color legend.
 - Expandable per-segment detail: binary overlay, instance masks, confidence heatmap.
 - Area summary table and bar chart.
-- AI vision analysis via GPT-4o-mini (optional, requires OpenAI API key).
+- **AI Vision Chat** — all per-segment images (binary overlays, instance masks, confidence scores) are sent to the AI model with instance counts and area data. Ask follow-up questions in a chat interface with guardrails that keep responses focused on the imagery.
 - Export results as CSV or overlay PNG.
+
+#### Settings Tab
+- Configure API keys (OpenAI, HuggingFace) via password fields.
+- Adjust SAM3 thresholds, OpenAI model, data source paths.
+- All settings persisted to `config.json`. Secrets stored in `.env`.
 
 ### CLI
 
@@ -133,7 +141,7 @@ run_text_segmentation()     → langsam_mask.tif (binary)
 raster_to_vector()          → segments.gpkg + summary.csv
     │
     ▼
-GPT-4o-mini Vision          → natural language analysis
+GPT-5.4-nano Vision         → multi-image chat analysis
     │
     ▼
 Streamlit UI                → overlays, charts, export
@@ -141,13 +149,34 @@ Streamlit UI                → overlays, charts, export
 
 ## Configuration
 
+Settings are managed through two files:
+
+- **`config.json`** — all non-secret settings (thresholds, paths, defaults). Editable via the Settings tab in the app.
+- **`.env`** — secrets only (API keys, tokens). Also editable via the Settings tab.
+
+Neither file is committed to git.
+
+### `config.json` parameters
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `bbox` | Guatemala City 1km | Bounding box (west, south, east, north) |
-| `zoom` | `18` | Tile zoom level (~0.6 m/pixel) |
-| `out_dir` | `output` | Output directory |
-| `box_threshold` | `0.5` | SAM3 confidence threshold |
-| `text_threshold` | `0.5` | SAM3 mask threshold |
+| `default_bbox` | Guatemala City 1km | Default bounding box |
+| `default_zoom` | `18` | Tile zoom level (~0.6 m/pixel) |
+| `output_dir` | `output` | Output directory |
+| `confidence_threshold` | `0.5` | SAM3 confidence threshold |
+| `mask_threshold` | `0.5` | SAM3 mask threshold |
+| `openai_model` | `gpt-5.4-nano` | OpenAI model for vision analysis |
+| `open_buildings_dir` | `openbuildings` | Path to Open Buildings data |
+| `open_buildings_min_confidence` | `0.65` | Min confidence for building footprints |
+| `osm_overpass_url` | Overpass API | URL for OSM road queries |
+| `et_monitor_root` | *(empty)* | Path to ET Monitor project (planned) |
+
+### `.env` secrets
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key for NL parsing and vision analysis |
+| `HF_TOKEN` | HuggingFace token for SAM3 gated model access |
 
 ## Technology Stack
 

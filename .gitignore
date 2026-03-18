@@ -1,5 +1,6 @@
 # Environment variables and sensitive files
 .env
+config.json
 
 # Python cache files
 __pycache__/
@@ -54,3 +55,7 @@ old_files/
 # OS-specific files
 .DS_Store
 Thumbs.db
+*Zone.Identifier
+
+# Stray pip artifacts
+=*

@@ -32,6 +32,46 @@ def _find_tile_files(tile_dir: str) -> list[str]:
     return sorted(str(p) for p in d.glob("*_buildings.csv.gz"))
 
 
+def _find_relevant_tiles(tile_dir: str, bbox: list[float]) -> list[str]:
+    """Return only tile files whose geographic extent overlaps *bbox*.
+
+    Uses ``tiles.geojson`` index if available; falls back to all tiles.
+    """
+    import json
+
+    geojson_path = Path(tile_dir) / "tiles.geojson"
+    all_tiles = _find_tile_files(tile_dir)
+
+    if not geojson_path.exists():
+        return all_tiles
+
+    west, south, east, north = bbox
+    try:
+        with open(geojson_path) as f:
+            index = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return all_tiles
+
+    relevant_ids = set()
+    for feat in index.get("features", []):
+        coords = feat.get("geometry", {}).get("coordinates", [[]])[0]
+        if not coords:
+            continue
+        lngs = [c[0] for c in coords]
+        lats = [c[1] for c in coords]
+        t_west, t_south, t_east, t_north = min(lngs), min(lats), max(lngs), max(lats)
+        # Check overlap
+        if t_east >= west and t_west <= east and t_north >= south and t_south <= north:
+            tile_id = feat.get("properties", {}).get("tile_id", "")
+            if tile_id:
+                relevant_ids.add(tile_id)
+
+    if not relevant_ids:
+        return all_tiles  # Fallback: can't determine, scan all
+
+    return [t for t in all_tiles if any(tid in Path(t).stem for tid in relevant_ids)]
+
+
 def query_buildings(
     bbox: list[float],
     *,
@@ -58,7 +98,7 @@ def query_buildings(
         Building polygons with columns: latitude, longitude,
         area_in_meters, confidence, geometry.
     """
-    tile_files = _find_tile_files(tile_dir)
+    tile_files = _find_relevant_tiles(tile_dir, bbox)
     if not tile_files:
         return gpd.GeoDataFrame(columns=["geometry", "area_in_meters", "confidence"])
 

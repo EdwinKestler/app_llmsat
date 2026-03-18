@@ -12,7 +12,7 @@ from pipeline.pipeline import run_pipeline
 
 try:
     from openai import OpenAI
-except Exception:
+except ImportError:
     OpenAI = None
 
 SEGMENT_KEYWORDS: Dict[str, set[str]] = {
@@ -36,7 +36,7 @@ def parse_user_text(question: str, *, client: Optional[OpenAI] = None) -> List[s
     if client is not None:
         try:
             response = client.responses.create(
-                model="gpt-5.4-nano",
+                model=os.getenv("LLMSAT_OPENAI_MODEL", "gpt-5.4-nano"),
                 input=question,
                 tools=[
                     {
@@ -150,7 +150,7 @@ def _main() -> None:
     parser.add_argument("--out-dir", default="data", help="Pipeline output directory")
     args = parser.parse_args()
 
-    chart, df = ask(args.question, args.bbox, out_dir=args.out_dir)
+    chart, df, _segments = ask(args.question, args.bbox, out_dir=args.out_dir)
     print(df)
     chart.display()
 
