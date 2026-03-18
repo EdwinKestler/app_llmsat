@@ -1,5 +1,3 @@
-# Modified file app_stremlit/nl_query/openai_handler.py
-from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -9,7 +7,7 @@ import geopandas as gpd
 import pandas as pd
 import altair as alt
 
-from pipeline.config import PipelineConfig, load_config  # Updated import at line ~23
+from pipeline.config import PipelineConfig, load_config
 from pipeline.pipeline import run_pipeline
 
 try:
@@ -17,13 +15,21 @@ try:
 except Exception:
     OpenAI = None
 
-# ... (rest of the file unchanged)
 SEGMENT_KEYWORDS: Dict[str, set[str]] = {
     "water": {"water", "river", "lake", "pond", "sea", "ocean"},
     "tree": {"tree", "trees", "forest", "woodland", "vegetation"},
     "building": {"building", "buildings", "house", "houses", "structure"},
     "road": {"road", "roads", "street", "highway", "path"},
 }
+
+
+def _estimate_utm_crs(gdf: gpd.GeoDataFrame) -> str:
+    """Return an appropriate UTM EPSG code based on the centroid of *gdf*."""
+    centroid = gdf.geometry.union_all().centroid
+    zone = int((centroid.x + 180) / 6) + 1
+    epsg = 32600 + zone if centroid.y >= 0 else 32700 + zone
+    return f"EPSG:{epsg}"
+
 
 def parse_user_text(question: str, *, client: Optional[OpenAI] = None) -> List[str]:
     question_lower = question.lower()
@@ -67,6 +73,7 @@ def parse_user_text(question: str, *, client: Optional[OpenAI] = None) -> List[s
             segments.append(segment)
     return segments
 
+
 def map_keywords_to_segments(keywords: Iterable[str]) -> List[str]:
     segments = []
     for kw in keywords:
@@ -77,24 +84,36 @@ def map_keywords_to_segments(keywords: Iterable[str]) -> List[str]:
     seen = set()
     return [s for s in segments if not (s in seen or seen.add(s))]
 
+
 def _segment_file(out_dir: str, segment: str) -> Optional[Path]:
     files = sorted(Path(out_dir).glob(f"segment_{segment}_*.gpkg"))
     return files[-1] if files else None
+
 
 def fetch_segment_data(segment: str, out_dir: str) -> Tuple[gpd.GeoDataFrame, float]:
     gpkg = _segment_file(out_dir, segment)
     if gpkg is None:
         raise FileNotFoundError(f"No GeoPackage found for segment '{segment}' in '{out_dir}'")
     gdf = gpd.read_file(gpkg)
-    area = gdf.geometry.area.sum()
+    utm_crs = _estimate_utm_crs(gdf)
+    area = gdf.to_crs(utm_crs).geometry.area.sum()
     return gdf, area
 
-def ask(question: str, bbox: Iterable[float], *, out_dir: str = "data", use_altair: bool = True):
+
+def ask(
+    question: str,
+    bbox: Iterable[float],
+    *,
+    config: Optional[PipelineConfig] = None,
+    out_dir: str = "data",
+    use_altair: bool = True,
+):
     segments = parse_user_text(question)
     if not segments:
         raise ValueError("No known segment types referenced in question")
 
-    config = load_config(bbox=bbox, out_dir=out_dir)
+    if config is None:
+        config = load_config(bbox=bbox, out_dir=out_dir)
 
     if any(_segment_file(config.out_dir, s) is None for s in segments):
         for seg in segments:
@@ -108,12 +127,9 @@ def ask(question: str, bbox: Iterable[float], *, out_dir: str = "data", use_alta
         data.append({"segment": seg, "area_m2": area})
 
     df = pd.DataFrame(data)
-    if use_altair:
-        chart = alt.Chart(df).mark_bar().encode(x="segment", y="area_m2")
-    else:
-        import plotly.express as px
-        chart = px.bar(df, x="segment", y="area_m2")
+    chart = alt.Chart(df).mark_bar().encode(x="segment", y="area_m2")
     return chart, df
+
 
 def _main() -> None:
     import argparse
@@ -121,17 +137,12 @@ def _main() -> None:
     parser.add_argument("question", help="Natural language question")
     parser.add_argument("bbox", nargs=4, type=float, help="Bounding box xmin ymin xmax ymax")
     parser.add_argument("--out-dir", default="data", help="Pipeline output directory")
-    parser.add_argument(
-        "--plotly", action="store_true", help="Use Plotly instead of Altair for the chart"
-    )
     args = parser.parse_args()
 
-    chart, df = ask(args.question, args.bbox, out_dir=args.out_dir, use_altair=not args.plotly)
+    chart, df = ask(args.question, args.bbox, out_dir=args.out_dir)
     print(df)
-    if hasattr(chart, "show"):
-        chart.show()
-    else:
-        chart.display()
+    chart.display()
+
 
 if __name__ == "__main__":
     _main()

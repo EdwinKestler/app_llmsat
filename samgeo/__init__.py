@@ -7,7 +7,7 @@ import rasterio
 from rasterio.transform import from_origin
 
 
-def tms_to_geotiff(output: str, bbox, zoom: int, source: str = "Satellite", overwrite: bool = True):
+def tms_to_geotiff(output: str, bbox, zoom: int, source: str = "Satellite", overwrite: bool = True, **kwargs):
     """Create a dummy GeoTIFF file representing downloaded imagery."""
     transform = from_origin(0, 0, 1, 1)
     profile = {

@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from nl_query.openai_handler import ask
 from pipeline.config import PipelineConfig
 
-# Load .env file
 load_dotenv()
 
 st.set_page_config(layout="wide")
@@ -43,11 +42,8 @@ if run_query:
             bbox = [float(coord.strip()) for coord in bbox_str.split(",")]
             if len(bbox) != 4:
                 raise ValueError("Bounding box must have exactly 4 values: west, south, east, north.")
-            
-            openai_api_key = os.getenv("OPENAI_API_KEY")
-            if openai_api_key:
-                os.environ["OPENAI_API_KEY"] = openai_api_key
-            else:
+
+            if not os.getenv("OPENAI_API_KEY"):
                 st.warning("No OpenAI API key found in .env file. Falling back to simple keyword parsing.")
 
             config = PipelineConfig(
@@ -59,13 +55,13 @@ if run_query:
                 box_threshold=0.24,
                 text_threshold=0.24,
             )
-            
+
             with st.spinner("Processing query... This may take a while if segmentation is needed."):
-                chart, df = ask(question, bbox, out_dir=out_dir)
-            
+                chart, df = ask(question, bbox, config=config)
+
             st.subheader("Results")
             st.dataframe(df.style.format({"area_m2": "{:.2f}"}))
-            
+
             st.subheader("Visualization")
             st.altair_chart(
                 chart.mark_bar()
@@ -77,7 +73,7 @@ if run_query:
                 .properties(width=600, height=400),
                 use_container_width=True
             )
-            
+
         except ValueError as ve:
             st.error(f"Invalid input: {str(ve)}")
         except FileNotFoundError as fe:

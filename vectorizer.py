@@ -45,6 +45,10 @@ def raster_to_vector(raster_path: str, out_path: str) -> gpd.GeoDataFrame:
 def summarise(gdf: gpd.GeoDataFrame, out_csv: str) -> pd.DataFrame:
     """Create a summary CSV of polygon areas in square metres."""
     summary = gdf.copy()
-    summary["area_m2"] = summary.geometry.area
+    centroid = summary.geometry.union_all().centroid
+    zone = int((centroid.x + 180) / 6) + 1
+    epsg = 32600 + zone if centroid.y >= 0 else 32700 + zone
+    projected = summary.to_crs(f"EPSG:{epsg}")
+    summary["area_m2"] = projected.geometry.area
     summary[["area_m2"]].to_csv(out_csv, index=False)
     return summary
