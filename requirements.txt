@@ -13,3 +13,6 @@ python-dotenv>=1.0
 
 # Config
 pyyaml>=6.0
+
+# Segmentation (optional — stubs are used in tests)
+# samgeo>=0.9

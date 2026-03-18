@@ -40,7 +40,6 @@ old_files/
 *.bak
 *.swp
 *.tif
-!samgeo/*.py
 
 # IDE and editor files
 .vscode/

@@ -22,9 +22,17 @@ app_llmsat/
 │   ├── __init__.py         # Exports ask()
 │   └── openai_handler.py   # NL parsing (OpenAI or keyword fallback), segment lookup, charting
 │
-├── samgeo/                 # Local stubs for the samgeo package (used for testing)
-│   ├── __init__.py         # Stub tms_to_geotiff() and SamGeo class
-│   └── text_sam.py         # Stub LangSAM class
+├── tests/                  # Test suite
+│   ├── conftest.py         # Prepends stubs/ to sys.path so samgeo stubs load
+│   ├── stubs/
+│   │   └── samgeo/         # Lightweight samgeo stubs (no PyTorch/CUDA needed)
+│   │       ├── __init__.py # Stub tms_to_geotiff() and SamGeo class
+│   │       └── text_sam.py # Stub LangSAM class
+│   ├── test_config.py
+│   ├── test_downloader.py
+│   ├── test_nl_query.py
+│   ├── test_segmenter.py
+│   └── test_vectorizer.py
 │
 ├── checkpoints/            # Model weights directory (not committed)
 │
