@@ -175,27 +175,49 @@ with tab_settings:
 
     # ── Save button ─────────────────────────────────────────────────
     if st.button("Save Settings", type="primary"):
-        # Save secrets to .env
-        if oai_key:
-            cfg.set_secret("OPENAI_API_KEY", oai_key)
-        if hf_token:
-            cfg.set_secret("HF_TOKEN", hf_token)
+        # Validate inputs before saving
+        _save_errors = []
 
-        # Save config to config.json
-        settings_cfg.update({
-            "openai_model": openai_model,
-            "confidence_threshold": conf_thresh,
-            "mask_threshold": mask_thresh,
-            "open_buildings_dir": ob_dir,
-            "open_buildings_min_confidence": ob_min_conf,
-            "osm_overpass_url": osm_url,
-            "et_monitor_root": et_root,
-            "default_zoom": default_zoom,
-            "output_dir": out_dir_setting,
-        })
-        cfg.save_config(settings_cfg)
-        st.success("Settings saved!")
-        st.rerun()
+        if osm_url:
+            url_ok, url_err = cfg.validate_url(osm_url)
+            if not url_ok:
+                _save_errors.append(f"Overpass URL: {url_err}")
+
+        if out_dir_setting:
+            path_ok, path_err = cfg.validate_safe_path(out_dir_setting)
+            if not path_ok:
+                _save_errors.append(f"Output dir: {path_err}")
+
+        if ob_dir:
+            ob_ok, ob_err = cfg.validate_safe_path(ob_dir)
+            if not ob_ok:
+                _save_errors.append(f"Open Buildings dir: {ob_err}")
+
+        if _save_errors:
+            for err in _save_errors:
+                st.error(err)
+        else:
+            # Save secrets to .env (with restricted permissions)
+            if oai_key:
+                cfg.set_secret("OPENAI_API_KEY", oai_key)
+            if hf_token:
+                cfg.set_secret("HF_TOKEN", hf_token)
+
+            # Save config to config.json
+            settings_cfg.update({
+                "openai_model": openai_model,
+                "confidence_threshold": conf_thresh,
+                "mask_threshold": mask_thresh,
+                "open_buildings_dir": ob_dir,
+                "open_buildings_min_confidence": ob_min_conf,
+                "osm_overpass_url": osm_url,
+                "et_monitor_root": et_root,
+                "default_zoom": default_zoom,
+                "output_dir": out_dir_setting,
+            })
+            cfg.save_config(settings_cfg)
+            st.success("Settings saved!")
+            st.rerun()
 
 # =====================================================================
 # MAIN TAB
@@ -296,10 +318,12 @@ with tab_main:
             )
             try:
                 manual_bbox = [float(x.strip()) for x in bbox_str.split(",")]
-                if len(manual_bbox) == 4 and manual_bbox != st.session_state.bbox:
-                    st.session_state.bbox = manual_bbox
-                    st.session_state.imagery_loaded = False
-                    st.session_state.segmentation_done = False
+                if manual_bbox != st.session_state.bbox:
+                    ok, err = cfg.validate_bbox(manual_bbox)
+                    if ok:
+                        st.session_state.bbox = manual_bbox
+                        st.session_state.imagery_loaded = False
+                        st.session_state.segmentation_done = False
             except ValueError:
                 pass
         with input_col2:
@@ -325,7 +349,19 @@ with tab_main:
 
     # ── Process load ────────────────────────────────────────────────
     if load_btn:
+        # Validate bbox
         bbox = st.session_state.bbox
+        bbox_ok, bbox_err = cfg.validate_bbox(bbox)
+        if not bbox_ok:
+            st.error(f"Invalid bounding box: {bbox_err}")
+            st.stop()
+
+        # Validate output path is safe (within project)
+        path_ok, path_err = cfg.validate_safe_path(out_dir)
+        if not path_ok:
+            st.error(f"Invalid output directory: {path_err}")
+            st.stop()
+
         imagery_dir = os.path.join(out_dir, "_imagery")
 
         if os.path.isdir(imagery_dir):
@@ -909,7 +945,7 @@ with tab_main:
                             st.session_state.vision_analysis_done = True
                             st.rerun()
                         except Exception as e:
-                            st.warning(f"Vision analysis failed: {e}")
+                            st.warning("Vision analysis failed. Check your API key in Settings.")
 
             # ── Chat interface ──────────────────────────────────────
             if st.session_state.vision_analysis_done:
@@ -944,7 +980,7 @@ with tab_main:
                                 st.markdown(reply)
                                 st.session_state.vision_chat.append({"role": "assistant", "content": reply})
                             except Exception as e:
-                                st.warning(f"Chat failed: {e}")
+                                st.warning("Chat request failed. Check your API key and try again.")
 
                 # Reset button
                 if st.button("Clear Chat", type="secondary"):

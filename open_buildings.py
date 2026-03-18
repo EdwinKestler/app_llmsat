@@ -102,23 +102,49 @@ def query_buildings(
     if not tile_files:
         return gpd.GeoDataFrame(columns=["geometry", "area_in_meters", "confidence"])
 
-    west, south, east, north = bbox
+    # Validate bbox values are safe floats
+    try:
+        west, south, east, north = [float(x) for x in bbox]
+        min_confidence = float(min_confidence)
+        max_buildings = int(max_buildings)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Invalid query parameters: {e}")
+
+    import math
+    if any(not math.isfinite(x) for x in [west, south, east, north, min_confidence]):
+        raise ValueError("Query parameters must be finite numbers")
+    if not (-180 <= west <= 180 and -180 <= east <= 180):
+        raise ValueError("Longitude must be between -180 and 180")
+    if not (-90 <= south <= 90 and -90 <= north <= 90):
+        raise ValueError("Latitude must be between -90 and 90")
 
     con = duckdb.connect()
 
-    # Build UNION ALL across all tiles
+    # Validate tile file paths are within expected directory
+    tile_dir_resolved = Path(tile_dir).resolve()
+    for tf in tile_files:
+        if not Path(tf).resolve().is_relative_to(tile_dir_resolved):
+            raise ValueError(f"Tile path escapes directory: {tf}")
+
+    # Use parameterized queries to prevent SQL injection
     queries = []
     for tf in tile_files:
         queries.append(f"""
             SELECT latitude, longitude, area_in_meters, confidence, geometry
             FROM read_csv_auto('{tf}', compression='gzip')
-            WHERE longitude BETWEEN {west} AND {east}
-              AND latitude BETWEEN {south} AND {north}
-              AND confidence >= {min_confidence}
+            WHERE longitude BETWEEN $west AND $east
+              AND latitude BETWEEN $south AND $north
+              AND confidence >= $min_conf
         """)
 
-    sql = " UNION ALL ".join(queries) + f" LIMIT {max_buildings}"
-    df = con.execute(sql).fetchdf()
+    sql = " UNION ALL ".join(queries) + " LIMIT $max_rows"
+    params = {
+        "west": west, "east": east,
+        "south": south, "north": north,
+        "min_conf": min_confidence,
+        "max_rows": max_buildings,
+    }
+    df = con.execute(sql, params).fetchdf()
     con.close()
 
     if df.empty:
