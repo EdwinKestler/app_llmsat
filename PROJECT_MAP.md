@@ -50,7 +50,10 @@ app_llmsat/
 │
 ├── checkpoints/            # Model weights directory (not committed)
 ├── output/                 # Pipeline output (not committed)
-└── old_files/              # Archived experimental scripts
+│
+├── LICENSE                 # AGPL-3.0
+├── PLAN_ET_LAYERS.md       # ET Monitor integration plan
+└── PLAN_GRADIO_MODAL.md    # Gradio + Modal.com migration plan
 ```
 
 ## Data Flow

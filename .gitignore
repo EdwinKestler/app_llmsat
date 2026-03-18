@@ -1,61 +1,55 @@
-# Environment variables and sensitive files
+# ── Secrets & user config ────────────────────────────────────────
 .env
 config.json
 
-# Python cache files
+# ── Python ───────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+dist/
+build/
 
-# Virtual environments
+# ── Virtual environments ─────────────────────────────────────────
 .venv/
 venv/
 env/
 
-# Conda
-environment.yml
-full_environment.yml
-*.conda
-*.tar.bz2
-
-# Streamlit secrets
-.streamlit/secrets.toml
-
-# Output directories from pipeline
+# ── Pipeline output (regenerated at runtime) ─────────────────────
 output/
 data/
 
-# Model checkpoints (large binaries)
+# ── Model checkpoints (large, download separately) ───────────────
 checkpoints/*
 !checkpoints/.gitkeep
 
-# Cached imagery
+# ── Cached imagery tiles ─────────────────────────────────────────
 EsriCache/
-
-# Open Buildings data (large CSV tiles, download separately)
-openbuildings/*.csv.gz
-openbuildings/*.csv
-openbuildings/*Zone.Identifier
-
-# Archived/experimental files
-old_files/
-
-# Temporary files
-*.log
-*.tmp
-*.bak
-*.swp
 *.tif
 
-# IDE and editor files
+# ── Open Buildings data (large, download separately) ─────────────
+openbuildings/*.csv.gz
+openbuildings/*.csv
+
+# ── Legacy / archived files ──────────────────────────────────────
+old_files/
+
+# ── IDE & editor ─────────────────────────────────────────────────
 .vscode/
 .idea/
 *.sublime-*
 
-# OS-specific files
+# ── OS artifacts ─────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 *Zone.Identifier
 
-# Stray pip artifacts
+# ── Misc artifacts ───────────────────────────────────────────────
 =*
+*.log
+*.tmp
+*.bak
+*.swp
+
+# ── Streamlit ────────────────────────────────────────────────────
+.streamlit/secrets.toml
