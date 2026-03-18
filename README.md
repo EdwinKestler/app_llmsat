@@ -190,6 +190,14 @@ Neither file is committed to git.
 | Spatial queries | DuckDB, GeoPandas, Rasterio |
 | UI | Streamlit + Folium |
 
+## Planned: Gradio + Modal.com Migration
+
+Cloud deployment with serverless GPU for SAM3 segmentation. See [PLAN_GRADIO_MODAL.md](PLAN_GRADIO_MODAL.md) for the full migration plan.
+
+- Gradio UI (no full-page reruns, native chat, REST API)
+- Modal.com (A100 GPU on demand, scale-to-zero, ~$0.03/query)
+- Streamlit version kept for local/offline use
+
 ## Planned: ET Monitor Data Layers
 
 Multi-layer environmental data overlay using satellite products from the companion [ET Monitor](https://github.com/EdwinKestler/weatherunderground2csv) project. See [PLAN_ET_LAYERS.md](PLAN_ET_LAYERS.md) for the full implementation plan.

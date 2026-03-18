@@ -993,15 +993,48 @@ with tab_main:
         # ── Download results ────────────────────────────────────────────
 
         st.subheader("Export")
-        export_cols = st.columns(3)
+        st.caption("GeoJSON files can be imported into QGIS, Google Earth, kepler.gl, or pasted into a GitHub Gist (auto-renders a map).")
+
+        # Build segment dirs mapping for export
+        _seg_dirs = {}
+        for seg in segments:
+            info = seg_results.get(seg, {})
+            _seg_dirs[seg] = info.get("out_dir", os.path.join(out_dir, seg))
+
+        export_cols = st.columns(4)
         with export_cols[0]:
             csv_data = df.to_csv(index=False)
-            st.download_button("📄 Download CSV", csv_data, "area_summary.csv", "text/csv", width="stretch")
+            st.download_button("📄 CSV Summary", csv_data, "area_summary.csv", "text/csv", use_container_width=True)
         with export_cols[1]:
             overlay_pil = Image.fromarray(overlay)
             buf = io.BytesIO()
             overlay_pil.save(buf, format="PNG")
-            st.download_button("🗺️ Download Overlay PNG", buf.getvalue(), "overlay.png", "image/png", width="stretch")
+            st.download_button("🖼️ Overlay PNG", buf.getvalue(), "overlay.png", "image/png", use_container_width=True)
+        with export_cols[2]:
+            from vectorizer import export_geojson
+            geojson_data = export_geojson(_seg_dirs, bbox=list(st.session_state.bbox))
+            st.download_button(
+                "🌐 All Segments GeoJSON",
+                geojson_data,
+                "llmsat_segments.geojson",
+                "application/geo+json",
+                use_container_width=True,
+            )
+        with export_cols[3]:
+            # Per-segment GeoJSON downloads in an expander
+            from vectorizer import export_per_segment_geojson
+            with st.popover("📦 Per-Segment GeoJSON"):
+                for seg in segments:
+                    seg_dir = _seg_dirs.get(seg, "")
+                    seg_geojson = export_per_segment_geojson(seg, seg_dir)
+                    st.download_button(
+                        f"{seg.capitalize()}",
+                        seg_geojson,
+                        f"llmsat_{seg}.geojson",
+                        "application/geo+json",
+                        key=f"export_{seg}",
+                        use_container_width=True,
+                    )
 
     # ── Footer ──────────────────────────────────────────────────────────
     
