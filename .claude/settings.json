@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/kestl/github/GeoDeep/**)",
+      "Bash(wc -l /home/kestl/github/GeoDeep/geodeep/*.py)",
+      "Bash(git -C /home/kestl/github/GeoDeep log --oneline)",
+      "Bash(find /home/kestl/github/GeoDeep -not -path */.git* -type f)",
+      "Bash(grep -r \"import\" /home/kestl/github/GeoDeep/geodeep/*.py)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''app.py'', doraise=True\\); print\\(''app.py OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''pipeline/geodetector.py'', doraise=True\\); print\\(''geodetector.py OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''pipeline/__init__.py'', doraise=True\\); print\\(''__init__.py OK''\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''app.py'', doraise=True\\); print\\(''app.py OK''\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''pipeline/geodetector.py'', doraise=True\\); print\\(''geodetector.py OK''\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''pipeline/__init__.py'', doraise=True\\); print\\(''__init__.py OK''\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''app.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''config_manager.py'', doraise=True\\); print\\(''config_manager.py OK''\\)\")",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:roboflow.github.io)",
+      "WebFetch(domain:rfdetr.roboflow.com)",
+      "WebFetch(domain:blog.roboflow.com)",
+      "WebFetch(domain:www.analyticsvidhya.com)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:www.digitalocean.com)",
+      "WebFetch(domain:learnopencv.com)"
+    ]
+  }
+}

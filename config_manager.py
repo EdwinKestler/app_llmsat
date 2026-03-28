@@ -49,6 +49,10 @@ DEFAULTS: dict[str, Any] = {
     # OpenAI
     "openai_model": "gpt-5.4-nano",
 
+    # GeoDeep CPU fallback
+    "cpu_fallback": False,
+    "hybrid_mode": False,
+
     # ET Monitor (planned)
     "et_monitor_root": "",
 

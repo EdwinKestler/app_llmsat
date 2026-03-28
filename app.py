@@ -13,6 +13,7 @@ Tab 2 (Settings):
   API keys, model config, thresholds, paths — persisted to config.json
 """
 
+import logging
 import shutil
 import streamlit as st
 import os
@@ -28,12 +29,33 @@ from dotenv import load_dotenv
 from streamlit_folium import st_folium
 from matplotlib import cm
 
+# Configure GeoDeep/LLMSat logging to terminal
+logging.basicConfig(
+    format="%(asctime)s  %(name)-28s  %(levelname)-5s  %(message)s",
+    datefmt="%H:%M:%S",
+    level=logging.INFO,
+)
+# Suppress noisy libraries, keep our diagnostics
+logging.getLogger("geodeep").setLevel(logging.WARNING)
+logging.getLogger("llmsat.geodetector").setLevel(logging.DEBUG)
+
 import config_manager as cfg
 from downloader import download_imagery
 from segmenter import run_text_segmentation, run_auto_segmentation
 from vectorizer import raster_to_vector, summarise
 from nl_query.openai_handler import fetch_segment_data
 from pipeline.config import PipelineConfig
+from pipeline.geodetector import (
+    is_available as geodeep_available,
+    available_models as geodeep_models,
+    run_detection as geodeep_run_detection,
+    run_cpu_segmentation as geodeep_cpu_segment,
+    has_cpu_fallback as geodeep_has_fallback,
+    run_hybrid_segmentation as geodeep_hybrid_segment,
+    has_hybrid_support as geodeep_has_hybrid,
+    detection_result_to_geojson_features,
+    DetectionResult,
+)
 
 load_dotenv()
 
@@ -113,6 +135,10 @@ if "segmentation_done" not in st.session_state:
     st.session_state.segmentation_done = False
 if "seg_results" not in st.session_state:
     st.session_state.seg_results = {}
+if "detection_results" not in st.session_state:
+    st.session_state.detection_results = {}
+if "detection_done" not in st.session_state:
+    st.session_state.detection_done = False
 
 # ── Page config ─────────────────────────────────────────────────────
 
@@ -157,6 +183,37 @@ with tab_settings:
         conf_thresh = st.slider("SAM3 Confidence Threshold", 0.0, 1.0, settings_cfg.get("confidence_threshold", 0.5), 0.05)
     with col_m3:
         mask_thresh = st.slider("SAM3 Mask Threshold", 0.0, 1.0, settings_cfg.get("mask_threshold", 0.5), 0.05)
+
+    # ── CPU Fallback Mode ────────────────────────────────────────
+    cpu_fallback = st.toggle(
+        "CPU-only mode (no GPU required)",
+        value=settings_cfg.get("cpu_fallback", False),
+        help=(
+            "When enabled, tree/building/road segmentation uses lightweight "
+            "GeoDeep ONNX models instead of SAM3. No GPU needed — runs on any machine. "
+            "Accuracy may differ from SAM3 for some prompts."
+        ),
+    )
+    if cpu_fallback:
+        if geodeep_available():
+            st.caption("GeoDeep CPU models will be used for tree, building, and road segments.")
+        else:
+            st.warning("geodeep package is not installed. Run: `pip install geodeep`")
+
+    hybrid_mode = st.toggle(
+        "Hybrid mode (GeoDeep detect → SAM3 refine)",
+        value=settings_cfg.get("hybrid_mode", False),
+        disabled=cpu_fallback,
+        help=(
+            "GeoDeep first detects objects on CPU (fast), then SAM3 refines "
+            "each bounding box into pixel-perfect masks (GPU). Best accuracy "
+            "for trees and vehicles. Requires GPU. Disabled when CPU-only mode is on."
+        ),
+    )
+    if cpu_fallback:
+        hybrid_mode = False
+    if hybrid_mode and geodeep_available():
+        st.caption("Hybrid pipeline: GeoDeep detection → SAM3 refinement for tree, car, vehicle, plane.")
 
     # ── Data Sources ────────────────────────────────────────────────
     st.subheader("Data Sources")
@@ -212,6 +269,8 @@ with tab_settings:
                 "openai_model": openai_model,
                 "confidence_threshold": conf_thresh,
                 "mask_threshold": mask_thresh,
+                "cpu_fallback": cpu_fallback,
+                "hybrid_mode": hybrid_mode,
                 "open_buildings_dir": ob_dir,
                 "open_buildings_min_confidence": ob_min_conf,
                 "osm_overpass_url": osm_url,
@@ -244,13 +303,16 @@ with tab_main:
         if not cfg.get_secret("HF_TOKEN"):
             st.warning("No HF token — set in Settings tab")
         st.markdown("---")
-        st.markdown(
+        _sources = (
             "**Data sources:**\n"
             "- SAM3 (Meta)\n"
             "- Google Open Buildings\n"
             "- OpenStreetMap\n"
-            "- OpenAI Vision"
+            "- OpenAI Vision\n"
         )
+        if geodeep_available():
+            _sources += "- GeoDeep (CPU detection)\n"
+        st.markdown(_sources)
 
     # =====================================================================
     # STEP 1 — Select Area & Load Imagery
@@ -589,8 +651,46 @@ with tab_main:
             except Exception as e:
                 st.info(f"OSM road preview unavailable — using SAM3 text prompts only. ({e})")
 
-        if not selected:
-            st.warning("Select at least one segment type.")
+        # ── GeoDeep Object Detection (CPU-only) ────────────────────────
+        if geodeep_available():
+            st.markdown("---")
+            st.subheader("Object Detection (CPU — GeoDeep)")
+            st.caption(
+                "Lightweight ONNX models for object detection and segmentation. "
+                "Runs on CPU — no GPU required."
+            )
+
+            _gd_models = geodeep_models()
+            _gd_det_models = {k: v for k, v in _gd_models.items() if v["type"] == "detection"}
+            _gd_seg_models = {k: v for k, v in _gd_models.items() if v["type"] == "segmentation"}
+
+            st.markdown("**Detection models**")
+            det_cols = st.columns(min(len(_gd_det_models), 5))
+            selected_detections = []
+            for i, (key, info) in enumerate(_gd_det_models.items()):
+                with det_cols[i % len(det_cols)]:
+                    if st.checkbox(
+                        f"{info['icon']} {info['label']}",
+                        key=f"gd_{key}",
+                        help=info["description"],
+                    ):
+                        selected_detections.append(key)
+
+            st.markdown("**CPU segmentation models**")
+            seg_cols = st.columns(min(len(_gd_seg_models), 4))
+            for i, (key, info) in enumerate(_gd_seg_models.items()):
+                with seg_cols[i % len(seg_cols)]:
+                    if st.checkbox(
+                        f"{info['icon']} {info['label']}",
+                        key=f"gd_{key}",
+                        help=info["description"],
+                    ):
+                        selected_detections.append(key)
+        else:
+            selected_detections = []
+
+        if not selected and not selected_detections:
+            st.warning("Select at least one segment type or detection model.")
         else:
             seg_col1, seg_col2 = st.columns([1, 3])
             with seg_col1:
@@ -603,11 +703,17 @@ with tab_main:
                 image_path = st.session_state.image_path
                 seg_results = {}
 
-                status = st.status("Running SAM3 segmentation...", expanded=True)
+                _use_cpu = _cfg.get("cpu_fallback", False)
+                _use_hybrid = _cfg.get("hybrid_mode", False) and not _use_cpu
+                if _use_cpu:
+                    _status_label = "Running CPU segmentation (GeoDeep)..."
+                elif _use_hybrid:
+                    _status_label = "Running hybrid segmentation (GeoDeep → SAM3)..."
+                else:
+                    _status_label = "Running SAM3 segmentation..."
+                status = st.status(_status_label, expanded=True)
                 with status:
                     for seg in selected:
-                        st.write(f"Segmenting **{seg}**...")
-
                         seg_out_dir = os.path.join(out_dir, seg)
 
                         # Clear stale outputs for this segment so nothing is reused
@@ -619,31 +725,84 @@ with tab_main:
                         seg_image = os.path.join(seg_out_dir, "s2harm_rgb_saa.tif")
                         _shutil.copy2(image_path, seg_image)
 
-                        config = PipelineConfig(
-                            bbox=bbox, zoom=zoom, out_dir=seg_out_dir,
-                            box_threshold=_cfg.get("confidence_threshold", 0.5),
-                            text_threshold=_cfg.get("mask_threshold", 0.5),
-                        )
+                        # Track which path was used (for skipping auto-seg)
+                        _used_alt_path = False
 
-                        # Text-prompted segmentation
-                        try:
-                            mask_path = run_text_segmentation(seg_image, [seg], config)
-                            with rasterio.open(mask_path) as src:
-                                mask_data = src.read(1)
-                            has_data = mask_data.any()
-                            n_pixels = np.count_nonzero(mask_data)
+                        # ── Hybrid path: GeoDeep detect → SAM3 refine ──
+                        if _use_hybrid and geodeep_has_hybrid(seg):
+                            st.write(f"Segmenting **{seg}** (hybrid: GeoDeep → SAM3)...")
+                            try:
+                                has_data, mask_path, n_det = geodeep_hybrid_segment(
+                                    seg_image, seg, seg_out_dir,
+                                )
+                                if has_data:
+                                    with rasterio.open(mask_path) as src:
+                                        n_pixels = np.count_nonzero(src.read(1))
+                                    st.write(
+                                        f"  ✅ **{seg}**: {n_det} detections → "
+                                        f"SAM3 refined ({n_pixels:,} pixels)"
+                                    )
+                                else:
+                                    st.write(f"  ⚠️ **{seg}**: GeoDeep found {n_det} objects but SAM3 produced no mask")
+                                _used_alt_path = True
+                            except Exception as e:
+                                has_data = False
+                                mask_path = os.path.join(seg_out_dir, "langsam_mask.tif")
+                                st.write(f"  ⚠️ **{seg}** hybrid failed ({e}), falling back to SAM3...")
+                                _used_alt_path = False  # fall through to SAM3
 
-                            if has_data:
-                                st.write(f"  ✅ **{seg}**: detected ({n_pixels:,} pixels)")
-                            else:
-                                st.write(f"  ⚠️ **{seg}**: no objects found")
-                        except Exception as e:
-                            has_data = False
-                            st.write(f"  ❌ **{seg}**: error — {e}")
+                        # ── CPU fallback path ─────────────────────────
+                        elif _use_cpu and geodeep_has_fallback(seg):
+                            st.write(f"Segmenting **{seg}** (CPU / GeoDeep)...")
+                            try:
+                                has_data, mask_path = geodeep_cpu_segment(
+                                    seg_image, seg, seg_out_dir,
+                                )
+                                if has_data:
+                                    with rasterio.open(mask_path) as src:
+                                        n_pixels = np.count_nonzero(src.read(1))
+                                    st.write(f"  ✅ **{seg}**: detected ({n_pixels:,} pixels) — CPU")
+                                else:
+                                    st.write(f"  ⚠️ **{seg}**: no objects found (CPU)")
+                                _used_alt_path = True
+                            except Exception as e:
+                                has_data = False
+                                mask_path = os.path.join(seg_out_dir, "langsam_mask.tif")
+                                st.write(f"  ❌ **{seg}** CPU fallback failed: {e}")
+                                _used_alt_path = True
+
+                        # ── Standard SAM3 path ────────────────────────
+                        if not _used_alt_path:
+                            st.write(f"Segmenting **{seg}**...")
+                            config = PipelineConfig(
+                                bbox=bbox, zoom=zoom, out_dir=seg_out_dir,
+                                box_threshold=_cfg.get("confidence_threshold", 0.5),
+                                text_threshold=_cfg.get("mask_threshold", 0.5),
+                            )
+                            try:
+                                mask_path = run_text_segmentation(seg_image, [seg], config)
+                                with rasterio.open(mask_path) as src:
+                                    mask_data = src.read(1)
+                                has_data = mask_data.any()
+                                n_pixels = np.count_nonzero(mask_data)
+
+                                if has_data:
+                                    st.write(f"  ✅ **{seg}**: detected ({n_pixels:,} pixels)")
+                                else:
+                                    st.write(f"  ⚠️ **{seg}**: no objects found")
+                            except Exception as e:
+                                has_data = False
+                                st.write(f"  ❌ **{seg}**: error — {e}")
 
                         # Auto segmentation + vectorise
                         try:
-                            auto_mask = run_auto_segmentation(seg_image, config)
+                            if not _used_alt_path:
+                                config = PipelineConfig(
+                                    bbox=bbox, zoom=zoom, out_dir=seg_out_dir,
+                                    box_threshold=_cfg.get("confidence_threshold", 0.5),
+                                    text_threshold=_cfg.get("mask_threshold", 0.5),
+                                )
+                                auto_mask = run_auto_segmentation(seg_image, config)
                             gpkg_path = os.path.join(seg_out_dir, "segments.gpkg")
                             csv_path = os.path.join(seg_out_dir, "summary.csv")
                             gdf = raster_to_vector(mask_path, gpkg_path)
@@ -656,6 +815,62 @@ with tab_main:
                     st.session_state.seg_results = seg_results
                     st.session_state.segmentation_done = True
                     st.session_state.selected_segments = selected
+
+                    # ── GeoDeep detection pass ─────────────────────────
+                    detection_results = {}
+                    if selected_detections:
+                        st.write("---")
+                        st.write("**Running GeoDeep object detection (CPU)...**")
+                        # Show input diagnostics once
+                        from pipeline.geodetector import _inspect_geotiff
+                        _img_diag = _inspect_geotiff(image_path)
+                        st.caption(
+                            f"Input: {_img_diag['width']}x{_img_diag['height']} px  "
+                            f"| {_img_diag['res_cm_x']:.1f}x{_img_diag['res_cm_y']:.1f} cm/px  "
+                            f"| CRS: {_img_diag['crs']}  "
+                            f"| tiled: {_img_diag['is_tiled']}"
+                        )
+
+                        for det_key in selected_detections:
+                            det_info = geodeep_models().get(det_key, {})
+                            st.write(f"  Detecting **{det_info.get('label', det_key)}**...")
+                            import time as _time
+                            _t0 = _time.time()
+                            result = geodeep_run_detection(
+                                image_path,
+                                det_key,
+                                progress_callback=lambda text, pct: None,
+                            )
+                            _elapsed = _time.time() - _t0
+                            if result.error:
+                                st.write(f"  ❌ {det_info.get('label', det_key)}: {result.error}")
+                            elif result.count > 0:
+                                # Show detailed results in UI
+                                from collections import Counter as _Ctr
+                                _cls = _Ctr(result.classes)
+                                _cls_str = ", ".join(f"{c}: {n}" for c, n in _cls.most_common())
+                                _scores = result.scores
+                                _avg = sum(_scores) / len(_scores) if _scores else 0
+                                _mn = min(_scores) if _scores else 0
+                                _mx = max(_scores) if _scores else 0
+                                st.write(
+                                    f"  ✅ **{det_info.get('label', det_key)}**: "
+                                    f"**{result.count}** objects in {_elapsed:.1f}s"
+                                )
+                                st.caption(
+                                    f"  Classes: {_cls_str}  |  "
+                                    f"Confidence: min={_mn:.3f}  avg={_avg:.3f}  max={_mx:.3f}"
+                                )
+                            else:
+                                st.write(
+                                    f"  ⚠️ {det_info.get('label', det_key)}: "
+                                    f"no objects found ({_elapsed:.1f}s)"
+                                )
+                            detection_results[det_key] = result
+
+                    st.session_state.detection_results = detection_results
+                    st.session_state.detection_done = bool(detection_results)
+
                     # Reset AI chat for new segmentation
                     st.session_state.vision_chat = []
                     st.session_state.vision_analysis_done = False
@@ -774,6 +989,87 @@ with tab_main:
                     else:
                         st.info("Not available")
 
+        # ── GeoDeep detection results ────────────────────────────────────
+
+        detection_results = st.session_state.get("detection_results", {})
+        if detection_results:
+            st.subheader("Object Detection Results (GeoDeep)")
+
+            # Summary metrics row
+            det_metric_cols = st.columns(min(len(detection_results), 5))
+            for i, (det_key, result) in enumerate(detection_results.items()):
+                with det_metric_cols[i % len(det_metric_cols)]:
+                    det_info = geodeep_models().get(det_key, {})
+                    icon = det_info.get("icon", "")
+                    if result.error:
+                        st.metric(f"{icon} {result.label}", "Error")
+                    else:
+                        st.metric(f"{icon} {result.label}", f"{result.count}")
+
+            # Detection overlay on satellite image
+            for det_key, result in detection_results.items():
+                if result.error or result.count == 0:
+                    continue
+
+                det_info = geodeep_models().get(det_key, {})
+                with st.expander(
+                    f"**{det_info.get('icon', '')} {result.label}** — {result.count} objects",
+                    expanded=True,
+                ):
+                    if result.model_type == "detection" and result.bboxes:
+                        # Draw bounding boxes on satellite image
+                        from PIL import ImageDraw
+                        from rasterio.transform import rowcol
+
+                        det_rgb = rgb.copy()
+                        pil_img = Image.fromarray(det_rgb)
+                        draw = ImageDraw.Draw(pil_img, "RGBA")
+
+                        img_path = st.session_state.image_path
+                        with rasterio.open(img_path) as src:
+                            transform = src.transform
+                            img_h, img_w = src.height, src.width
+
+                        # Group by class for coloring
+                        _det_colors = [
+                            (0, 255, 0, 180), (255, 0, 0, 180), (0, 0, 255, 180),
+                            (255, 255, 0, 180), (255, 0, 255, 180), (0, 255, 255, 180),
+                        ]
+                        unique_classes = sorted(set(result.classes))
+                        class_color_map = {
+                            cls: _det_colors[i % len(_det_colors)]
+                            for i, cls in enumerate(unique_classes)
+                        }
+
+                        for bbox, score, cls in zip(result.bboxes, result.scores, result.classes):
+                            # bbox is [west, south, east, north] in WGS84
+                            r1, c1 = rowcol(transform, bbox[0], bbox[3])  # top-left
+                            r2, c2 = rowcol(transform, bbox[2], bbox[1])  # bottom-right
+                            r1 = max(0, min(img_h - 1, int(r1)))
+                            c1 = max(0, min(img_w - 1, int(c1)))
+                            r2 = max(0, min(img_h - 1, int(r2)))
+                            c2 = max(0, min(img_w - 1, int(c2)))
+
+                            color = class_color_map.get(cls, (0, 255, 0, 180))
+                            draw.rectangle([c1, r1, c2, r2], outline=color, width=2)
+
+                        det_arr = np.array(pil_img)
+                        col_img, col_stats = st.columns([3, 1])
+                        with col_img:
+                            st.image(det_arr, caption=f"{result.count} detections", width="stretch")
+                        with col_stats:
+                            # Class breakdown
+                            from collections import Counter
+                            cls_counts = Counter(result.classes)
+                            for cls_name, cnt in cls_counts.most_common():
+                                st.caption(f"{cls_name}: {cnt}")
+                            if result.scores:
+                                avg_score = sum(result.scores) / len(result.scores)
+                                st.metric("Avg confidence", f"{avg_score:.2f}")
+
+                    elif result.model_type == "segmentation" and result.geojson:
+                        st.info(f"{result.count} polygon features detected via CPU segmentation.")
+
         # ── Area summary ────────────────────────────────────────────────
 
         st.subheader("Area Summary")
@@ -831,66 +1127,81 @@ with tab_main:
                 vision_images.append(("Original satellite imagery", _image_to_data_url(rgb)))
                 vision_images.append(("Combined segmentation overlay", _image_to_data_url(overlay)))
 
-            # 3. Per-segment: binary overlay + instance mask + stats
-            for seg in segments:
-                info = seg_results.get(seg, {})
-                seg_dir = info.get("out_dir", os.path.join(out_dir, seg))
-                mask_path = os.path.join(seg_dir, "langsam_mask.tif")
-                unique_path = os.path.join(seg_dir, f"sam3_{seg}_masks.tif")
-                scores_path = os.path.join(seg_dir, f"sam3_{seg}_scores.tif")
+                # Per-segment: binary overlay + instance mask + stats
+                for seg in segments:
+                    info = seg_results.get(seg, {})
+                    seg_dir = info.get("out_dir", os.path.join(out_dir, seg))
+                    mask_path = os.path.join(seg_dir, "langsam_mask.tif")
+                    unique_path = os.path.join(seg_dir, f"sam3_{seg}_masks.tif")
+                    scores_path = os.path.join(seg_dir, f"sam3_{seg}_scores.tif")
 
-                n_instances = 0
-                n_pixels = 0
-                avg_conf = 0.0
+                    n_instances = 0
+                    n_pixels = 0
+                    avg_conf = 0.0
 
-                # Binary overlay per segment
-                if os.path.exists(mask_path) and mask_found.get(seg):
-                    mask = _load_mask(mask_path)
-                    n_pixels = int(mask.sum())
-                    color = SEGMENT_COLORS.get(seg, (255, 255, 0, 140))
-                    seg_overlay = _overlay_mask(rgb.copy(), mask, color)
-                    vision_images.append((
-                        f"{seg.capitalize()} binary overlay ({n_pixels:,} pixels)",
-                        _image_to_data_url(seg_overlay),
-                    ))
-
-                # Instance mask — count unique objects
-                if os.path.exists(unique_path):
-                    with rasterio.open(unique_path) as src:
-                        unique_data = src.read(1)
-                    n_instances = len(np.unique(unique_data)) - 1  # exclude 0
-                    if n_instances > 0 and unique_data.max() > 0:
-                        colored = (cm.tab20(unique_data % 20)[:, :, :3] * 255).astype(np.uint8)
-                        colored[unique_data == 0] = rgb[unique_data == 0]
+                    # Binary overlay per segment
+                    if os.path.exists(mask_path) and mask_found.get(seg):
+                        mask = _load_mask(mask_path)
+                        n_pixels = int(mask.sum())
+                        color = SEGMENT_COLORS.get(seg, (255, 255, 0, 140))
+                        seg_overlay = _overlay_mask(rgb.copy(), mask, color)
                         vision_images.append((
-                            f"{seg.capitalize()} instance masks ({n_instances} objects)",
-                            _image_to_data_url(colored),
+                            f"{seg.capitalize()} binary overlay ({n_pixels:,} pixels)",
+                            _image_to_data_url(seg_overlay),
                         ))
 
-                # Confidence scores — compute average
-                if os.path.exists(scores_path):
-                    with rasterio.open(scores_path) as src:
-                        scores_data = src.read(1).astype(float)
-                    valid = scores_data[scores_data > 0]
-                    if len(valid) > 0:
-                        avg_conf = float(valid.mean())
+                    # Instance mask — count unique objects
+                    if os.path.exists(unique_path):
+                        with rasterio.open(unique_path) as src:
+                            unique_data = src.read(1)
+                        n_instances = len(np.unique(unique_data)) - 1  # exclude 0
+                        if n_instances > 0 and unique_data.max() > 0:
+                            colored = (cm.tab20(unique_data % 20)[:, :, :3] * 255).astype(np.uint8)
+                            colored[unique_data == 0] = rgb[unique_data == 0]
+                            vision_images.append((
+                                f"{seg.capitalize()} instance masks ({n_instances} objects)",
+                                _image_to_data_url(colored),
+                            ))
 
-                seg_detail_lines.append(
-                    f"- **{seg}**: {n_instances} instances, {n_pixels:,} pixels, "
-                    f"avg confidence {avg_conf:.2f}"
-                )
+                    # Confidence scores — compute average
+                    if os.path.exists(scores_path):
+                        with rasterio.open(scores_path) as src:
+                            scores_data = src.read(1).astype(float)
+                        valid = scores_data[scores_data > 0]
+                        if len(valid) > 0:
+                            avg_conf = float(valid.mean())
+
+                    seg_detail_lines.append(
+                        f"- **{seg}**: {n_instances} instances, {n_pixels:,} pixels, "
+                        f"avg confidence {avg_conf:.2f}"
+                    )
 
                 # Cache in session state
                 st.session_state.vision_images = vision_images
                 st.session_state.seg_detail = "\n".join(seg_detail_lines)
-            else:
-                seg_detail_lines = []
 
             # Use cached images for all subsequent renders
             vision_images = st.session_state.get("vision_images", [])
             seg_detail = st.session_state.get("seg_detail", "")
 
             # ── System prompt with full context ─────────────────────
+            # Build detection context for AI
+            _det_context = ""
+            if detection_results:
+                _det_lines = []
+                for _dk, _dr in detection_results.items():
+                    if _dr.error:
+                        continue
+                    if _dr.model_type == "detection" and _dr.classes:
+                        from collections import Counter as _Counter
+                        _cls_counts = _Counter(_dr.classes)
+                        _cls_str = ", ".join(f"{c}: {n}" for c, n in _cls_counts.most_common())
+                        _det_lines.append(f"- {_dr.label}: {_dr.count} objects ({_cls_str})")
+                    else:
+                        _det_lines.append(f"- {_dr.label}: {_dr.count} features")
+                if _det_lines:
+                    _det_context = "GeoDeep object detection results:\n" + "\n".join(_det_lines) + "\n\n"
+
             _SYSTEM_PROMPT = (
                 "You are a geospatial analyst. You have been given multiple satellite "
                 "images of a specific area including the original imagery, a combined "
@@ -899,6 +1210,7 @@ with tab_main:
                 f"Detected segments: {', '.join(segments)}\n\n"
                 f"Area measurements:\n{area_context}\n\n"
                 f"Per-segment instance counts:\n{seg_detail}\n\n"
+                f"{_det_context}"
                 f"Bounding box (EPSG:4326): {st.session_state.bbox}\n\n"
                 "IMAGE LEGEND (in order):\n"
             )
@@ -1017,6 +1329,14 @@ with tab_main:
         with export_cols[2]:
             from vectorizer import export_geojson
             geojson_data = export_geojson(_seg_dirs, bbox=list(st.session_state.bbox))
+            # Merge GeoDeep detection features into the GeoJSON export
+            if detection_results:
+                import json as _json
+                _fc = _json.loads(geojson_data)
+                for _det_result in detection_results.values():
+                    _fc["features"].extend(detection_result_to_geojson_features(_det_result))
+                _fc["properties"]["total_features"] = len(_fc["features"])
+                geojson_data = _json.dumps(_fc, indent=2)
             st.download_button(
                 "🌐 All Segments GeoJSON",
                 geojson_data,
@@ -1043,4 +1363,4 @@ with tab_main:
     # ── Footer ──────────────────────────────────────────────────────────
     
     st.markdown("---")
-    st.markdown("Powered by SAM3, DINOv3, and OpenAI Vision. Built by Edwin Kestler.")
+    st.markdown("Powered by SAM3, DINOv3, GeoDeep, and OpenAI Vision. Built by Edwin Kestler.")

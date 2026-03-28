@@ -30,5 +30,8 @@ duckdb>=0.9
 # System (install via apt: libgdal-dev gdal-bin)
 # GDAL  # version must match system libgdal
 
+# Object detection (GeoDeep — CPU-only ONNX models)
+geodeep>=0.9.12
+
 # Visualization
 matplotlib>=3.7
