@@ -21,7 +21,7 @@ pyyaml>=6.0
 
 # Segmentation (SAM3)
 segment-geospatial[samgeo2,samgeo3]>=1.2
-transformers<5  # GroundingDINO incompatible with transformers 5.x
+transformers>=5.1  # RF-DETR requires >=5.1; GroundingDINO may need samgeo update
 psutil>=5.9
 
 # Open Buildings spatial queries
@@ -30,7 +30,11 @@ duckdb>=0.9
 # System (install via apt: libgdal-dev gdal-bin)
 # GDAL  # version must match system libgdal
 
-# Object detection (GeoDeep — CPU-only ONNX models)
+# Object detection — primary (RF-DETR transformer, GPU)
+rfdetr>=1.4
+supervision>=0.26.1
+
+# Object detection — legacy CPU fallback (GeoDeep ONNX models)
 geodeep>=0.9.12
 
 # Visualization

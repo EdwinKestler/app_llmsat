@@ -49,7 +49,13 @@ DEFAULTS: dict[str, Any] = {
     # OpenAI
     "openai_model": "gpt-5.4-nano",
 
-    # GeoDeep CPU fallback
+    # Object detection
+    "rfdetr_model": "rfdetr_base",
+    "rfdetr_threshold": 0.3,
+    "rfdetr_aerial_only": True,
+
+    # GeoDeep legacy (CPU fallback — low accuracy, opt-in only)
+    "show_geodeep_legacy": False,
     "cpu_fallback": False,
     "hybrid_mode": False,
 

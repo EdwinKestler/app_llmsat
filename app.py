@@ -17,6 +17,7 @@ import logging
 import shutil
 import streamlit as st
 import os
+from datetime import datetime
 import io
 import base64
 import numpy as np
@@ -45,16 +46,21 @@ from segmenter import run_text_segmentation, run_auto_segmentation
 from vectorizer import raster_to_vector, summarise
 from nl_query.openai_handler import fetch_segment_data
 from pipeline.config import PipelineConfig
+from pipeline.rfdetector import (
+    is_available as rfdetr_available,
+    available_models as rfdetr_models,
+    run_detection as rfdetr_run_detection,
+    result_to_geojson as rfdetr_to_geojson,
+    pixel_bboxes_to_geo as rfdetr_bboxes_to_geo,
+    RFDetectionResult,
+)
 from pipeline.geodetector import (
     is_available as geodeep_available,
     available_models as geodeep_models,
     run_detection as geodeep_run_detection,
     run_cpu_segmentation as geodeep_cpu_segment,
     has_cpu_fallback as geodeep_has_fallback,
-    run_hybrid_segmentation as geodeep_hybrid_segment,
-    has_hybrid_support as geodeep_has_hybrid,
     detection_result_to_geojson_features,
-    DetectionResult,
 )
 
 load_dotenv()
@@ -135,6 +141,8 @@ if "segmentation_done" not in st.session_state:
     st.session_state.segmentation_done = False
 if "seg_results" not in st.session_state:
     st.session_state.seg_results = {}
+if "rfdetr_results" not in st.session_state:
+    st.session_state.rfdetr_results = {}
 if "detection_results" not in st.session_state:
     st.session_state.detection_results = {}
 if "detection_done" not in st.session_state:
@@ -144,7 +152,7 @@ if "detection_done" not in st.session_state:
 
 st.set_page_config(page_title="LLMSat", layout="wide")
 
-tab_main, tab_settings = st.tabs(["Main", "Settings"])
+tab_main, tab_training, tab_settings = st.tabs(["Main", "Train Custom Detector", "Settings"])
 
 # =====================================================================
 # SETTINGS TAB
@@ -184,36 +192,32 @@ with tab_settings:
     with col_m3:
         mask_thresh = st.slider("SAM3 Mask Threshold", 0.0, 1.0, settings_cfg.get("mask_threshold", 0.5), 0.05)
 
-    # ── CPU Fallback Mode ────────────────────────────────────────
+    # ── Advanced / Legacy Options ────────────────────────────────
+    st.subheader("Advanced")
+
+    show_geodeep = st.toggle(
+        "Show GeoDeep legacy detection (CPU, low accuracy)",
+        value=settings_cfg.get("show_geodeep_legacy", False),
+        help=(
+            "Enables GeoDeep ONNX models (YOLO v7/v9) in the main tab. "
+            "These are CPU-only but have significantly lower accuracy than "
+            "RF-DETR. Only use when no GPU is available."
+        ),
+    )
+
     cpu_fallback = st.toggle(
         "CPU-only mode (no GPU required)",
         value=settings_cfg.get("cpu_fallback", False),
         help=(
             "When enabled, tree/building/road segmentation uses lightweight "
             "GeoDeep ONNX models instead of SAM3. No GPU needed — runs on any machine. "
-            "Accuracy may differ from SAM3 for some prompts."
+            "Accuracy will be lower than SAM3."
         ),
     )
-    if cpu_fallback:
-        if geodeep_available():
-            st.caption("GeoDeep CPU models will be used for tree, building, and road segments.")
-        else:
-            st.warning("geodeep package is not installed. Run: `pip install geodeep`")
+    if cpu_fallback and not geodeep_available():
+        st.warning("geodeep package is not installed. Run: `pip install geodeep`")
 
-    hybrid_mode = st.toggle(
-        "Hybrid mode (GeoDeep detect → SAM3 refine)",
-        value=settings_cfg.get("hybrid_mode", False),
-        disabled=cpu_fallback,
-        help=(
-            "GeoDeep first detects objects on CPU (fast), then SAM3 refines "
-            "each bounding box into pixel-perfect masks (GPU). Best accuracy "
-            "for trees and vehicles. Requires GPU. Disabled when CPU-only mode is on."
-        ),
-    )
-    if cpu_fallback:
-        hybrid_mode = False
-    if hybrid_mode and geodeep_available():
-        st.caption("Hybrid pipeline: GeoDeep detection → SAM3 refinement for tree, car, vehicle, plane.")
+    hybrid_mode = False  # reserved for future RF-DETR → SAM3 hybrid
 
     # ── Data Sources ────────────────────────────────────────────────
     st.subheader("Data Sources")
@@ -269,6 +273,7 @@ with tab_settings:
                 "openai_model": openai_model,
                 "confidence_threshold": conf_thresh,
                 "mask_threshold": mask_thresh,
+                "show_geodeep_legacy": show_geodeep,
                 "cpu_fallback": cpu_fallback,
                 "hybrid_mode": hybrid_mode,
                 "open_buildings_dir": ob_dir,
@@ -306,12 +311,11 @@ with tab_main:
         _sources = (
             "**Data sources:**\n"
             "- SAM3 (Meta)\n"
+            "- RF-DETR (Roboflow)\n"
             "- Google Open Buildings\n"
             "- OpenStreetMap\n"
             "- OpenAI Vision\n"
         )
-        if geodeep_available():
-            _sources += "- GeoDeep (CPU detection)\n"
         st.markdown(_sources)
 
     # =====================================================================
@@ -651,47 +655,71 @@ with tab_main:
             except Exception as e:
                 st.info(f"OSM road preview unavailable — using SAM3 text prompts only. ({e})")
 
-        # ── GeoDeep Object Detection (CPU-only) ────────────────────────
-        if geodeep_available():
+        # ── RF-DETR Object Detection (GPU, high accuracy) ──────────────
+        selected_rfdetr = []
+        selected_detections = []  # legacy GeoDeep, populated only if enabled
+
+        if rfdetr_available():
             st.markdown("---")
-            st.subheader("Object Detection (CPU — GeoDeep)")
+            st.subheader("Object Detection (RF-DETR)")
             st.caption(
-                "Lightweight ONNX models for object detection and segmentation. "
-                "Runs on CPU — no GPU required."
+                "Transformer-based detection (ICLR 2026). 90 mAP on aerial imagery — "
+                "no NMS, excellent at small objects. Runs on GPU."
             )
 
-            _gd_models = geodeep_models()
-            _gd_det_models = {k: v for k, v in _gd_models.items() if v["type"] == "detection"}
-            _gd_seg_models = {k: v for k, v in _gd_models.items() if v["type"] == "segmentation"}
-
-            st.markdown("**Detection models**")
-            det_cols = st.columns(min(len(_gd_det_models), 5))
-            selected_detections = []
-            for i, (key, info) in enumerate(_gd_det_models.items()):
-                with det_cols[i % len(det_cols)]:
+            _rf_models = rfdetr_models()
+            rf_cols = st.columns(len(_rf_models))
+            for i, (key, info) in enumerate(_rf_models.items()):
+                with rf_cols[i]:
                     if st.checkbox(
                         f"{info['icon']} {info['label']}",
-                        key=f"gd_{key}",
+                        key=f"rf_{key}",
                         help=info["description"],
                     ):
-                        selected_detections.append(key)
+                        selected_rfdetr.append(key)
 
-            st.markdown("**CPU segmentation models**")
-            seg_cols = st.columns(min(len(_gd_seg_models), 4))
-            for i, (key, info) in enumerate(_gd_seg_models.items()):
-                with seg_cols[i % len(seg_cols)]:
-                    if st.checkbox(
-                        f"{info['icon']} {info['label']}",
-                        key=f"gd_{key}",
-                        help=info["description"],
-                    ):
-                        selected_detections.append(key)
-        else:
-            selected_detections = []
+            if selected_rfdetr:
+                _rf_opt_cols = st.columns(3)
+                with _rf_opt_cols[0]:
+                    _rf_thresh = st.slider(
+                        "Confidence threshold", 0.1, 0.9,
+                        _cfg.get("rfdetr_threshold", 0.3), 0.05,
+                        key="rf_thresh",
+                    )
+                with _rf_opt_cols[1]:
+                    _rf_aerial = st.checkbox(
+                        "Aerial classes only",
+                        value=_cfg.get("rfdetr_aerial_only", True),
+                        key="rf_aerial",
+                        help="Filter to vehicles, boats, planes, people — skip indoor objects.",
+                    )
 
-        if not selected and not selected_detections:
+        # ── GeoDeep legacy (opt-in from Settings) ─────────────────────
+        if _cfg.get("show_geodeep_legacy", False) and geodeep_available():
+            with st.expander("Legacy CPU detection (GeoDeep) — low accuracy", expanded=False):
+                st.caption(
+                    "YOLO v7/v9 ONNX models. CPU-only but significantly lower accuracy "
+                    "than RF-DETR. Use only when no GPU is available."
+                )
+                _gd_models = geodeep_models()
+                _gd_det_models = {k: v for k, v in _gd_models.items() if v["type"] == "detection"}
+                _gd_seg_models = {k: v for k, v in _gd_models.items() if v["type"] == "segmentation"}
+
+                gd_cols = st.columns(min(len(_gd_det_models) + len(_gd_seg_models), 5))
+                idx = 0
+                for key, info in {**_gd_det_models, **_gd_seg_models}.items():
+                    with gd_cols[idx % len(gd_cols)]:
+                        if st.checkbox(
+                            f"{info['icon']} {info['label']}",
+                            key=f"gd_{key}",
+                            help=info["description"],
+                        ):
+                            selected_detections.append(key)
+                    idx += 1
+
+        if not selected and not selected_rfdetr and not selected_detections:
             st.warning("Select at least one segment type or detection model.")
-        else:
+        elif selected or selected_rfdetr or selected_detections:
             seg_col1, seg_col2 = st.columns([1, 3])
             with seg_col1:
                 segment_btn = st.button("🔍 Run Segmentation", type="primary", width="stretch")
@@ -704,13 +732,7 @@ with tab_main:
                 seg_results = {}
 
                 _use_cpu = _cfg.get("cpu_fallback", False)
-                _use_hybrid = _cfg.get("hybrid_mode", False) and not _use_cpu
-                if _use_cpu:
-                    _status_label = "Running CPU segmentation (GeoDeep)..."
-                elif _use_hybrid:
-                    _status_label = "Running hybrid segmentation (GeoDeep → SAM3)..."
-                else:
-                    _status_label = "Running SAM3 segmentation..."
+                _status_label = "Running CPU segmentation (GeoDeep)..." if _use_cpu else "Running SAM3 segmentation..."
                 status = st.status(_status_label, expanded=True)
                 with status:
                     for seg in selected:
@@ -728,31 +750,8 @@ with tab_main:
                         # Track which path was used (for skipping auto-seg)
                         _used_alt_path = False
 
-                        # ── Hybrid path: GeoDeep detect → SAM3 refine ──
-                        if _use_hybrid and geodeep_has_hybrid(seg):
-                            st.write(f"Segmenting **{seg}** (hybrid: GeoDeep → SAM3)...")
-                            try:
-                                has_data, mask_path, n_det = geodeep_hybrid_segment(
-                                    seg_image, seg, seg_out_dir,
-                                )
-                                if has_data:
-                                    with rasterio.open(mask_path) as src:
-                                        n_pixels = np.count_nonzero(src.read(1))
-                                    st.write(
-                                        f"  ✅ **{seg}**: {n_det} detections → "
-                                        f"SAM3 refined ({n_pixels:,} pixels)"
-                                    )
-                                else:
-                                    st.write(f"  ⚠️ **{seg}**: GeoDeep found {n_det} objects but SAM3 produced no mask")
-                                _used_alt_path = True
-                            except Exception as e:
-                                has_data = False
-                                mask_path = os.path.join(seg_out_dir, "langsam_mask.tif")
-                                st.write(f"  ⚠️ **{seg}** hybrid failed ({e}), falling back to SAM3...")
-                                _used_alt_path = False  # fall through to SAM3
-
                         # ── CPU fallback path ─────────────────────────
-                        elif _use_cpu and geodeep_has_fallback(seg):
+                        if _use_cpu and geodeep_has_fallback(seg):
                             st.write(f"Segmenting **{seg}** (CPU / GeoDeep)...")
                             try:
                                 has_data, mask_path = geodeep_cpu_segment(
@@ -816,36 +815,31 @@ with tab_main:
                     st.session_state.segmentation_done = True
                     st.session_state.selected_segments = selected
 
-                    # ── GeoDeep detection pass ─────────────────────────
-                    detection_results = {}
-                    if selected_detections:
+                    # ── RF-DETR detection pass (primary) ──────────────
+                    rfdetr_results = {}
+                    if selected_rfdetr:
                         st.write("---")
-                        st.write("**Running GeoDeep object detection (CPU)...**")
-                        # Show input diagnostics once
+                        st.write("**Running RF-DETR object detection (GPU)...**")
                         from pipeline.geodetector import _inspect_geotiff
                         _img_diag = _inspect_geotiff(image_path)
                         st.caption(
                             f"Input: {_img_diag['width']}x{_img_diag['height']} px  "
                             f"| {_img_diag['res_cm_x']:.1f}x{_img_diag['res_cm_y']:.1f} cm/px  "
-                            f"| CRS: {_img_diag['crs']}  "
-                            f"| tiled: {_img_diag['is_tiled']}"
+                            f"| CRS: {_img_diag['crs']}"
                         )
 
-                        for det_key in selected_detections:
-                            det_info = geodeep_models().get(det_key, {})
-                            st.write(f"  Detecting **{det_info.get('label', det_key)}**...")
-                            import time as _time
-                            _t0 = _time.time()
-                            result = geodeep_run_detection(
+                        for rf_key in selected_rfdetr:
+                            rf_info = rfdetr_models().get(rf_key, {})
+                            st.write(f"  Detecting **{rf_info.get('label', rf_key)}**...")
+                            result = rfdetr_run_detection(
                                 image_path,
-                                det_key,
-                                progress_callback=lambda text, pct: None,
+                                rf_key,
+                                threshold=_rf_thresh if '_rf_thresh' in dir() else 0.3,
+                                aerial_only=_rf_aerial if '_rf_aerial' in dir() else True,
                             )
-                            _elapsed = _time.time() - _t0
                             if result.error:
-                                st.write(f"  ❌ {det_info.get('label', det_key)}: {result.error}")
+                                st.write(f"  ❌ {rf_info.get('label', rf_key)}: {result.error}")
                             elif result.count > 0:
-                                # Show detailed results in UI
                                 from collections import Counter as _Ctr
                                 _cls = _Ctr(result.classes)
                                 _cls_str = ", ".join(f"{c}: {n}" for c, n in _cls.most_common())
@@ -854,8 +848,8 @@ with tab_main:
                                 _mn = min(_scores) if _scores else 0
                                 _mx = max(_scores) if _scores else 0
                                 st.write(
-                                    f"  ✅ **{det_info.get('label', det_key)}**: "
-                                    f"**{result.count}** objects in {_elapsed:.1f}s"
+                                    f"  ✅ **{rf_info.get('label', rf_key)}**: "
+                                    f"**{result.count}** objects in {result.elapsed:.1f}s"
                                 )
                                 st.caption(
                                     f"  Classes: {_cls_str}  |  "
@@ -863,13 +857,34 @@ with tab_main:
                                 )
                             else:
                                 st.write(
-                                    f"  ⚠️ {det_info.get('label', det_key)}: "
-                                    f"no objects found ({_elapsed:.1f}s)"
+                                    f"  ⚠️ {rf_info.get('label', rf_key)}: "
+                                    f"no objects found ({result.elapsed:.1f}s)"
                                 )
+                            rfdetr_results[rf_key] = result
+
+                    # ── GeoDeep legacy detection (only if enabled) ────
+                    detection_results = {}
+                    if selected_detections:
+                        st.write("---")
+                        st.write("**Running GeoDeep legacy detection (CPU)...**")
+                        for det_key in selected_detections:
+                            det_info = geodeep_models().get(det_key, {})
+                            st.write(f"  Detecting **{det_info.get('label', det_key)}**...")
+                            result = geodeep_run_detection(
+                                image_path, det_key,
+                                progress_callback=lambda text, pct: None,
+                            )
+                            if result.error:
+                                st.write(f"  ❌ {det_info.get('label', det_key)}: {result.error}")
+                            elif result.count > 0:
+                                st.write(f"  ✅ **{det_info.get('label', det_key)}**: **{result.count}** objects")
+                            else:
+                                st.write(f"  ⚠️ {det_info.get('label', det_key)}: no objects found")
                             detection_results[det_key] = result
 
+                    st.session_state.rfdetr_results = rfdetr_results
                     st.session_state.detection_results = detection_results
-                    st.session_state.detection_done = bool(detection_results)
+                    st.session_state.detection_done = bool(rfdetr_results) or bool(detection_results)
 
                     # Reset AI chat for new segmentation
                     st.session_state.vision_chat = []
@@ -914,7 +929,7 @@ with tab_main:
             mask_path = os.path.join(seg_dir, "langsam_mask.tif")
             if os.path.exists(mask_path):
                 mask = _load_mask(mask_path)
-                has_data = mask.any()
+                has_data = bool(mask.any())
                 mask_found[seg] = has_data
                 if has_data:
                     color = SEGMENT_COLORS.get(seg, (255, 255, 0, 140))
@@ -989,86 +1004,98 @@ with tab_main:
                     else:
                         st.info("Not available")
 
-        # ── GeoDeep detection results ────────────────────────────────────
+        # ── RF-DETR detection results (primary) ─────────────────────────
 
+        rfdetr_results = st.session_state.get("rfdetr_results", {})
         detection_results = st.session_state.get("detection_results", {})
-        if detection_results:
-            st.subheader("Object Detection Results (GeoDeep)")
 
-            # Summary metrics row
-            det_metric_cols = st.columns(min(len(detection_results), 5))
-            for i, (det_key, result) in enumerate(detection_results.items()):
-                with det_metric_cols[i % len(det_metric_cols)]:
-                    det_info = geodeep_models().get(det_key, {})
-                    icon = det_info.get("icon", "")
+        def _draw_bbox_overlay(rgb_img, result_bboxes, result_scores, result_classes, is_pixel_coords=True):
+            """Draw bounding boxes on image. Returns (image_array, class_counts)."""
+            from PIL import ImageDraw
+            _det_colors = [
+                (0, 255, 0, 200), (255, 50, 50, 200), (50, 50, 255, 200),
+                (255, 255, 0, 200), (255, 0, 255, 200), (0, 255, 255, 200),
+                (255, 128, 0, 200), (128, 0, 255, 200),
+            ]
+            pil_img = Image.fromarray(rgb_img.copy())
+            draw = ImageDraw.Draw(pil_img, "RGBA")
+            img_h, img_w = rgb_img.shape[:2]
+
+            unique_cls = sorted(set(result_classes))
+            cls_cmap = {c: _det_colors[i % len(_det_colors)] for i, c in enumerate(unique_cls)}
+
+            if is_pixel_coords:
+                for bbox, score, cls in zip(result_bboxes, result_scores, result_classes):
+                    x1, y1, x2, y2 = [int(round(v)) for v in bbox]
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2, y2 = min(img_w, x2), min(img_h, y2)
+                    color = cls_cmap.get(cls, (0, 255, 0, 200))
+                    draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+            else:
+                from rasterio.transform import rowcol
+                with rasterio.open(st.session_state.image_path) as src:
+                    transform = src.transform
+                for bbox, score, cls in zip(result_bboxes, result_scores, result_classes):
+                    r1, c1 = rowcol(transform, bbox[0], bbox[3])
+                    r2, c2 = rowcol(transform, bbox[2], bbox[1])
+                    r1, c1 = max(0, min(img_h-1, int(r1))), max(0, min(img_w-1, int(c1)))
+                    r2, c2 = max(0, min(img_h-1, int(r2))), max(0, min(img_w-1, int(c2)))
+                    color = cls_cmap.get(cls, (0, 255, 0, 200))
+                    draw.rectangle([c1, r1, c2, r2], outline=color, width=2)
+
+            from collections import Counter
+            return np.array(pil_img), Counter(result_classes)
+
+        if rfdetr_results:
+            st.subheader("Object Detection Results (RF-DETR)")
+
+            # Summary metrics
+            rf_metric_cols = st.columns(min(len(rfdetr_results), 4))
+            for i, (rf_key, result) in enumerate(rfdetr_results.items()):
+                with rf_metric_cols[i % len(rf_metric_cols)]:
                     if result.error:
-                        st.metric(f"{icon} {result.label}", "Error")
+                        st.metric(f"🎯 {result.label}", "Error")
                     else:
-                        st.metric(f"{icon} {result.label}", f"{result.count}")
+                        st.metric(f"🎯 {result.label}", f"{result.count}")
 
-            # Detection overlay on satellite image
-            for det_key, result in detection_results.items():
+            for rf_key, result in rfdetr_results.items():
                 if result.error or result.count == 0:
                     continue
 
-                det_info = geodeep_models().get(det_key, {})
                 with st.expander(
-                    f"**{det_info.get('icon', '')} {result.label}** — {result.count} objects",
+                    f"**🎯 {result.label}** — {result.count} objects ({result.elapsed:.1f}s)",
                     expanded=True,
                 ):
-                    if result.model_type == "detection" and result.bboxes:
-                        # Draw bounding boxes on satellite image
-                        from PIL import ImageDraw
-                        from rasterio.transform import rowcol
+                    det_arr, cls_counts = _draw_bbox_overlay(
+                        rgb, result.bboxes, result.scores, result.classes,
+                        is_pixel_coords=True,
+                    )
+                    col_img, col_stats = st.columns([3, 1])
+                    with col_img:
+                        st.image(det_arr, caption=f"{result.count} RF-DETR detections", width="stretch")
+                    with col_stats:
+                        for cls_name, cnt in cls_counts.most_common():
+                            st.caption(f"{cls_name}: {cnt}")
+                        if result.scores:
+                            avg_score = sum(result.scores) / len(result.scores)
+                            st.metric("Avg confidence", f"{avg_score:.2f}")
+                            st.metric("Inference", f"{result.elapsed:.2f}s")
 
-                        det_rgb = rgb.copy()
-                        pil_img = Image.fromarray(det_rgb)
-                        draw = ImageDraw.Draw(pil_img, "RGBA")
-
-                        img_path = st.session_state.image_path
-                        with rasterio.open(img_path) as src:
-                            transform = src.transform
-                            img_h, img_w = src.height, src.width
-
-                        # Group by class for coloring
-                        _det_colors = [
-                            (0, 255, 0, 180), (255, 0, 0, 180), (0, 0, 255, 180),
-                            (255, 255, 0, 180), (255, 0, 255, 180), (0, 255, 255, 180),
-                        ]
-                        unique_classes = sorted(set(result.classes))
-                        class_color_map = {
-                            cls: _det_colors[i % len(_det_colors)]
-                            for i, cls in enumerate(unique_classes)
-                        }
-
-                        for bbox, score, cls in zip(result.bboxes, result.scores, result.classes):
-                            # bbox is [west, south, east, north] in WGS84
-                            r1, c1 = rowcol(transform, bbox[0], bbox[3])  # top-left
-                            r2, c2 = rowcol(transform, bbox[2], bbox[1])  # bottom-right
-                            r1 = max(0, min(img_h - 1, int(r1)))
-                            c1 = max(0, min(img_w - 1, int(c1)))
-                            r2 = max(0, min(img_h - 1, int(r2)))
-                            c2 = max(0, min(img_w - 1, int(c2)))
-
-                            color = class_color_map.get(cls, (0, 255, 0, 180))
-                            draw.rectangle([c1, r1, c2, r2], outline=color, width=2)
-
-                        det_arr = np.array(pil_img)
-                        col_img, col_stats = st.columns([3, 1])
-                        with col_img:
-                            st.image(det_arr, caption=f"{result.count} detections", width="stretch")
-                        with col_stats:
-                            # Class breakdown
-                            from collections import Counter
-                            cls_counts = Counter(result.classes)
-                            for cls_name, cnt in cls_counts.most_common():
-                                st.caption(f"{cls_name}: {cnt}")
-                            if result.scores:
-                                avg_score = sum(result.scores) / len(result.scores)
-                                st.metric("Avg confidence", f"{avg_score:.2f}")
-
-                    elif result.model_type == "segmentation" and result.geojson:
-                        st.info(f"{result.count} polygon features detected via CPU segmentation.")
+        # ── GeoDeep legacy detection results ─────────────────────────────
+        if detection_results:
+            with st.expander("Legacy Detection Results (GeoDeep CPU)", expanded=False):
+                for det_key, result in detection_results.items():
+                    if result.error or result.count == 0:
+                        continue
+                    det_info = geodeep_models().get(det_key, {})
+                    if hasattr(result, 'bboxes') and result.bboxes:
+                        det_arr, cls_counts = _draw_bbox_overlay(
+                            rgb, result.bboxes, result.scores, result.classes,
+                            is_pixel_coords=False,
+                        )
+                        st.image(det_arr, caption=f"{result.count} GeoDeep detections ({result.label})")
+                    elif hasattr(result, 'geojson') and result.geojson:
+                        st.info(f"{result.count} polygon features ({result.label})")
 
         # ── Area summary ────────────────────────────────────────────────
 
@@ -1186,21 +1213,23 @@ with tab_main:
 
             # ── System prompt with full context ─────────────────────
             # Build detection context for AI
-            _det_context = ""
-            if detection_results:
-                _det_lines = []
-                for _dk, _dr in detection_results.items():
-                    if _dr.error:
+            _det_lines = []
+            if rfdetr_results:
+                for _dk, _dr in rfdetr_results.items():
+                    if _dr.error or _dr.count == 0:
                         continue
-                    if _dr.model_type == "detection" and _dr.classes:
-                        from collections import Counter as _Counter
-                        _cls_counts = _Counter(_dr.classes)
-                        _cls_str = ", ".join(f"{c}: {n}" for c, n in _cls_counts.most_common())
-                        _det_lines.append(f"- {_dr.label}: {_dr.count} objects ({_cls_str})")
-                    else:
-                        _det_lines.append(f"- {_dr.label}: {_dr.count} features")
-                if _det_lines:
-                    _det_context = "GeoDeep object detection results:\n" + "\n".join(_det_lines) + "\n\n"
+                    from collections import Counter as _Counter
+                    _cls_counts = _Counter(_dr.classes)
+                    _cls_str = ", ".join(f"{c}: {n}" for c, n in _cls_counts.most_common())
+                    _det_lines.append(f"- RF-DETR {_dr.label}: {_dr.count} objects ({_cls_str})")
+            if detection_results:
+                for _dk, _dr in detection_results.items():
+                    if hasattr(_dr, 'error') and _dr.error:
+                        continue
+                    _det_lines.append(f"- GeoDeep {_dr.label}: {_dr.count} objects")
+            _det_context = ""
+            if _det_lines:
+                _det_context = "Object detection results:\n" + "\n".join(_det_lines) + "\n\n"
 
             _SYSTEM_PROMPT = (
                 "You are a geospatial analyst. You have been given multiple satellite "
@@ -1329,14 +1358,21 @@ with tab_main:
         with export_cols[2]:
             from vectorizer import export_geojson
             geojson_data = export_geojson(_seg_dirs, bbox=list(st.session_state.bbox))
-            # Merge GeoDeep detection features into the GeoJSON export
+            # Merge RF-DETR detection features into the GeoJSON export
+            import json as _json
+            _fc = _json.loads(geojson_data)
+            if rfdetr_results:
+                for _rf_result in rfdetr_results.values():
+                    if _rf_result.count > 0:
+                        _rf_geojson = rfdetr_to_geojson(_rf_result, st.session_state.image_path)
+                        _rf_fc = _json.loads(_rf_geojson)
+                        _fc["features"].extend(_rf_fc.get("features", []))
+            # Merge legacy GeoDeep detection features
             if detection_results:
-                import json as _json
-                _fc = _json.loads(geojson_data)
                 for _det_result in detection_results.values():
                     _fc["features"].extend(detection_result_to_geojson_features(_det_result))
-                _fc["properties"]["total_features"] = len(_fc["features"])
-                geojson_data = _json.dumps(_fc, indent=2)
+            _fc["properties"]["total_features"] = len(_fc["features"])
+            geojson_data = _json.dumps(_fc, indent=2)
             st.download_button(
                 "🌐 All Segments GeoJSON",
                 geojson_data,
@@ -1360,7 +1396,461 @@ with tab_main:
                         use_container_width=True,
                     )
 
-    # ── Footer ──────────────────────────────────────────────────────────
-    
+    # =====================================================================
+    # TRAINING TAB
+    # =====================================================================
+
+with tab_training:
+    st.title("🎓 Train Custom Detector")
+    st.caption(
+        "Fine-tune RF-DETR on your own satellite annotations. "
+        "Segment an area in the Main tab, review detections here, then train."
+    )
+
+    from pipeline.dataset_builder import (
+        tile_geotiff, instance_masks_to_bboxes, rfdetr_bboxes_to_annotations,
+        clip_annotations_to_tile, create_dataset, list_datasets,
+        load_dataset_metadata, dataset_dir as get_dataset_dir,
+    )
+    from pipeline.annotator import (
+        merge_detections, render_annotated_tile, annotations_to_summary,
+    )
+    from pipeline.trainer import (
+        check_training_deps, train_rfdetr, register_custom_model,
+        load_custom_models, list_all_detection_models,
+    )
+
+    # ── Step 1: Build Dataset ─────────────────────────────────────────
+
+    st.header("Step 1: Build Dataset from Segmentation Results")
+
+    # Check if we have segmentation results
+    _has_seg = st.session_state.get("segmentation_done", False)
+    _has_rfdetr = bool(st.session_state.get("rfdetr_results", {}))
+    _image_path = st.session_state.get("image_path")
+
+    if not _has_seg and not _has_rfdetr:
+        st.info(
+            "No segmentation results yet. Go to the **Main** tab, select an area, "
+            "run segmentation and/or RF-DETR detection, then come back here."
+        )
+    else:
+        st.success("Segmentation results available. You can build a training dataset.")
+
+        # Tiling controls
+        _tile_cols = st.columns(3)
+        with _tile_cols[0]:
+            _tile_size = st.selectbox("Tile size (px)", [320, 512, 640], index=2)
+        with _tile_cols[1]:
+            _tile_overlap = st.slider("Tile overlap", 0.0, 0.4, 0.1, 0.05)
+        with _tile_cols[2]:
+            _project_name = st.text_input(
+                "Dataset name",
+                value=f"dataset_{datetime.now().strftime('%Y%m%d_%H%M')}",
+            )
+
+        # Collect annotations from all sources
+        if st.button("Generate Tiles & Annotations", type="primary"):
+            from datetime import datetime
+
+            _status = st.status("Building dataset...", expanded=True)
+            with _status:
+                # Tile the imagery
+                st.write("Tiling satellite imagery...")
+                tiles = tile_geotiff(_image_path, tile_size=_tile_size, overlap=_tile_overlap)
+                st.write(f"  Generated **{len(tiles)}** tiles ({_tile_size}x{_tile_size} px)")
+
+                # Collect global annotations from all sources
+                global_anns = []
+
+                # From SAM3 instance masks
+                seg_results = st.session_state.get("seg_results", {})
+                for seg_name, seg_info in seg_results.items():
+                    seg_dir = seg_info.get("out_dir", "")
+                    mask_path = os.path.join(seg_dir, f"sam3_{seg_name}_masks.tif")
+                    if os.path.exists(mask_path) and seg_info.get("has_data"):
+                        anns = instance_masks_to_bboxes(mask_path, class_name=seg_name)
+                        global_anns.extend(anns)
+                        st.write(f"  SAM3 **{seg_name}**: {len(anns)} annotations")
+
+                # From RF-DETR detections
+                rfdetr_res = st.session_state.get("rfdetr_results", {})
+                for rf_key, result in rfdetr_res.items():
+                    if result.count > 0 and not result.error:
+                        anns = rfdetr_bboxes_to_annotations(
+                            result.bboxes, result.scores, result.classes,
+                        )
+                        global_anns.extend(anns)
+                        st.write(f"  RF-DETR **{result.label}**: {len(anns)} annotations")
+
+                # Merge and deduplicate
+                st.write("Merging annotations...")
+                merged = merge_detections(
+                    sam3_annotations=[a for a in global_anns if a.get("source") == "sam3_mask"],
+                    rfdetr_annotations=[a for a in global_anns if a.get("source") == "rfdetr"],
+                )
+                st.write(f"  **{len(merged)}** annotations after deduplication")
+
+                # Clip annotations to each tile
+                st.write("Assigning annotations to tiles...")
+                tile_anns = []
+                total_tile_anns = 0
+                for tile in tiles:
+                    clipped = clip_annotations_to_tile(
+                        merged,
+                        tile["x_off"], tile["y_off"],
+                        _tile_size, _tile_size,
+                    )
+                    tile_anns.append(clipped)
+                    total_tile_anns += len(clipped)
+                st.write(f"  **{total_tile_anns}** tile-level annotations")
+
+                # Determine class names
+                class_names = sorted(set(a["class"] for a in merged))
+                st.write(f"  Classes: {', '.join(class_names)}")
+
+                # Estimate GSD
+                _gsd = 0.0
+                if _image_path:
+                    with rasterio.open(_image_path) as src:
+                        _gsd = abs(src.transform[0]) * 111320 * 100  # deg → cm
+
+                # Store for review
+                st.session_state._train_tiles = tiles
+                st.session_state._train_tile_anns = tile_anns
+                st.session_state._train_class_names = class_names
+                st.session_state._train_merged = merged
+                st.session_state._train_project_name = _project_name
+                st.session_state._train_gsd = _gsd
+
+                _status.update(label=f"Ready: {len(tiles)} tiles, {len(merged)} annotations", state="complete")
+
+        # ── Annotation review ─────────────────────────────────────────
+        if "_train_tiles" in st.session_state:
+            tiles = st.session_state._train_tiles
+            tile_anns = st.session_state._train_tile_anns
+            class_names = st.session_state._train_class_names
+
+            st.subheader("Review & Edit Annotations")
+            st.caption(
+                "Browse all tiles. Accept/reject each annotation, change classes, "
+                "or add new bounding boxes manually."
+            )
+
+            # ── Summary metrics ───────────────────────────────────
+            # Recount from tile_anns (reflects edits)
+            _all_anns_flat = [a for ta in tile_anns for a in ta]
+            _n_accepted = sum(1 for a in _all_anns_flat if a.get("accepted", True))
+            _n_rejected = sum(1 for a in _all_anns_flat if not a.get("accepted", True))
+
+            sum_cols = st.columns(5)
+            with sum_cols[0]:
+                st.metric("Tiles", len(tiles))
+            with sum_cols[1]:
+                st.metric("Total annotations", len(_all_anns_flat))
+            with sum_cols[2]:
+                st.metric("Accepted", _n_accepted)
+            with sum_cols[3]:
+                st.metric("Rejected", _n_rejected)
+            with sum_cols[4]:
+                st.metric("GSD", f"{st.session_state._train_gsd:.1f} cm/px")
+
+            # Class breakdown
+            _cls_counts = {}
+            for a in _all_anns_flat:
+                if a.get("accepted", True):
+                    _cls_counts[a["class"]] = _cls_counts.get(a["class"], 0) + 1
+            if _cls_counts:
+                cls_df = pd.DataFrame([
+                    {"class": k, "count": v} for k, v in _cls_counts.items()
+                ])
+                st.bar_chart(cls_df.set_index("class"))
+
+            # ── Tile browser ──────────────────────────────────────
+            st.subheader("Tile Browser")
+
+            # Tile navigation
+            _n_tiles = len(tiles)
+            _tiles_per_page = 4
+            _n_pages = max(1, (_n_tiles + _tiles_per_page - 1) // _tiles_per_page)
+
+            nav_cols = st.columns([1, 3, 1])
+            with nav_cols[1]:
+                _page = st.slider(
+                    "Page", 1, _n_pages, 1,
+                    key="tile_page",
+                    help=f"{_n_tiles} tiles, {_tiles_per_page} per page",
+                )
+            _start = (_page - 1) * _tiles_per_page
+            _end = min(_start + _tiles_per_page, _n_tiles)
+
+            # Show tiles for this page
+            page_cols = st.columns(min(_tiles_per_page, _end - _start))
+            for col_idx, tile_idx in enumerate(range(_start, _end)):
+                with page_cols[col_idx]:
+                    _tile = tiles[tile_idx]
+                    _anns = tile_anns[tile_idx]
+                    rendered = render_annotated_tile(
+                        _tile["rgb"], _anns, class_names, show_rejected=True,
+                    )
+                    _n_acc = sum(1 for a in _anns if a.get("accepted", True))
+                    st.image(
+                        rendered,
+                        caption=f"Tile {tile_idx} — {_n_acc}/{len(_anns)} accepted",
+                        width="stretch",
+                    )
+
+            # ── Per-tile annotation editor ────────────────────────
+            st.subheader("Edit Annotations")
+            _edit_tile = st.selectbox(
+                "Select tile to edit",
+                range(_n_tiles),
+                format_func=lambda i: f"Tile {i} ({len(tile_anns[i])} annotations)",
+                key="edit_tile_idx",
+            )
+
+            _tile = tiles[_edit_tile]
+            _anns = tile_anns[_edit_tile]
+
+            # Show tile with current annotations
+            edit_cols = st.columns([3, 2])
+            with edit_cols[0]:
+                rendered = render_annotated_tile(
+                    _tile["rgb"], _anns, class_names, show_rejected=True,
+                )
+                st.image(rendered, caption=f"Tile {_edit_tile}", width="stretch")
+
+            with edit_cols[1]:
+                st.markdown(f"**{len(_anns)} annotations**")
+
+                if not _anns:
+                    st.info("No annotations on this tile.")
+                else:
+                    for ann_idx, ann in enumerate(_anns):
+                        bx, by, bw, bh = ann["bbox"]
+                        _key_prefix = f"t{_edit_tile}_a{ann_idx}"
+
+                        with st.container(border=True):
+                            # Row 1: accept toggle + class selector
+                            r1c1, r1c2 = st.columns([1, 2])
+                            with r1c1:
+                                _accepted = st.checkbox(
+                                    "Keep",
+                                    value=ann.get("accepted", True),
+                                    key=f"{_key_prefix}_acc",
+                                )
+                                ann["accepted"] = _accepted
+                            with r1c2:
+                                _cls_idx = class_names.index(ann["class"]) if ann["class"] in class_names else 0
+                                _new_cls = st.selectbox(
+                                    "Class",
+                                    class_names,
+                                    index=_cls_idx,
+                                    key=f"{_key_prefix}_cls",
+                                    label_visibility="collapsed",
+                                )
+                                ann["class"] = _new_cls
+
+                            # Row 2: bbox coordinates (editable)
+                            r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+                            with r2c1:
+                                ann["bbox"][0] = st.number_input("x", value=float(bx), step=1.0, key=f"{_key_prefix}_x", label_visibility="collapsed")
+                            with r2c2:
+                                ann["bbox"][1] = st.number_input("y", value=float(by), step=1.0, key=f"{_key_prefix}_y", label_visibility="collapsed")
+                            with r2c3:
+                                ann["bbox"][2] = st.number_input("w", value=float(bw), step=1.0, min_value=1.0, key=f"{_key_prefix}_w", label_visibility="collapsed")
+                            with r2c4:
+                                ann["bbox"][3] = st.number_input("h", value=float(bh), step=1.0, min_value=1.0, key=f"{_key_prefix}_h", label_visibility="collapsed")
+
+                            st.caption(f"source: {ann.get('source', '?')} | score: {ann.get('score', 0):.2f}")
+
+                # ── Add new annotation ────────────────────────────
+                st.markdown("---")
+                st.markdown("**Add annotation**")
+                add_cols = st.columns([2, 1, 1, 1, 1, 1])
+                with add_cols[0]:
+                    _add_cls = st.selectbox("Class", class_names, key=f"add_cls_{_edit_tile}")
+                with add_cols[1]:
+                    _add_x = st.number_input("x", value=10.0, step=1.0, key=f"add_x_{_edit_tile}")
+                with add_cols[2]:
+                    _add_y = st.number_input("y", value=10.0, step=1.0, key=f"add_y_{_edit_tile}")
+                with add_cols[3]:
+                    _add_w = st.number_input("w", value=40.0, step=1.0, min_value=1.0, key=f"add_w_{_edit_tile}")
+                with add_cols[4]:
+                    _add_h = st.number_input("h", value=40.0, step=1.0, min_value=1.0, key=f"add_h_{_edit_tile}")
+                with add_cols[5]:
+                    if st.button("Add", key=f"add_btn_{_edit_tile}", use_container_width=True):
+                        tile_anns[_edit_tile].append({
+                            "bbox": [_add_x, _add_y, _add_w, _add_h],
+                            "class": _add_cls,
+                            "score": 1.0,
+                            "source": "manual",
+                            "accepted": True,
+                            "id": len(_anns) + 1,
+                        })
+                        # Also add to class_names if new
+                        if _add_cls not in class_names:
+                            class_names.append(_add_cls)
+                            st.session_state._train_class_names = class_names
+                        st.rerun()
+
+            # ── Bulk actions ──────────────────────────────────────
+            st.markdown("---")
+            bulk_cols = st.columns(4)
+            with bulk_cols[0]:
+                if st.button("Accept all on this tile", key="bulk_accept"):
+                    for a in tile_anns[_edit_tile]:
+                        a["accepted"] = True
+                    st.rerun()
+            with bulk_cols[1]:
+                if st.button("Reject all on this tile", key="bulk_reject"):
+                    for a in tile_anns[_edit_tile]:
+                        a["accepted"] = False
+                    st.rerun()
+            with bulk_cols[2]:
+                if st.button("Delete rejected", key="bulk_delete"):
+                    tile_anns[_edit_tile] = [a for a in tile_anns[_edit_tile] if a.get("accepted", True)]
+                    st.rerun()
+            with bulk_cols[3]:
+                _new_class = st.text_input("Add class", key="new_class_input", placeholder="e.g. solar_panel")
+                if _new_class and _new_class not in class_names:
+                    class_names.append(_new_class)
+                    st.session_state._train_class_names = class_names
+
+            # ── Save dataset button ───────────────────────────────
+            st.markdown("---")
+            # Filter out rejected annotations before saving
+            _save_tile_anns = [
+                [a for a in ta if a.get("accepted", True)]
+                for ta in tile_anns
+            ]
+            _total_save = sum(len(ta) for ta in _save_tile_anns)
+            st.caption(f"Will save **{_total_save}** accepted annotations across **{len(tiles)}** tiles.")
+
+            if st.button("💾 Save Dataset", type="primary"):
+                _proj = st.session_state._train_project_name
+                _bbox = st.session_state.get("bbox")
+                dataset_path = create_dataset(
+                    tiles=tiles,
+                    tile_annotations=_save_tile_anns,
+                    class_names=class_names,
+                    project_name=_proj,
+                    gsd_cm=st.session_state._train_gsd,
+                    source_bbox=_bbox,
+                )
+                st.success(f"Dataset saved to `{dataset_path}`")
+                st.rerun()
+
+    # ── Existing datasets ─────────────────────────────────────────────
+
     st.markdown("---")
-    st.markdown("Powered by SAM3, DINOv3, GeoDeep, and OpenAI Vision. Built by Edwin Kestler.")
+    st.subheader("Existing Datasets")
+    _datasets = list_datasets()
+    if _datasets:
+        for ds in _datasets:
+            with st.expander(f"**{ds['project_name']}** — {ds['n_train']}+{ds['n_val']} images, {ds.get('n_annotations_train', 0)}+{ds.get('n_annotations_val', 0)} annotations"):
+                ds_cols = st.columns(4)
+                with ds_cols[0]:
+                    st.caption(f"Classes: {', '.join(ds.get('class_names', []))}")
+                with ds_cols[1]:
+                    st.caption(f"GSD: {ds.get('gsd_cm', 0):.1f} cm/px")
+                with ds_cols[2]:
+                    st.caption(f"Created: {ds.get('created', 'unknown')[:10]}")
+    else:
+        st.info("No datasets yet. Build one from segmentation results above.")
+
+    # =====================================================================
+    # Step 2-3: Configure & Train
+    # =====================================================================
+
+    st.header("Step 2: Train")
+
+    _deps_ok, _deps_msg = check_training_deps()
+    if not _deps_ok:
+        st.warning(f"Training prerequisites: {_deps_msg}")
+    else:
+        st.success(_deps_msg)
+
+    if _datasets:
+        train_cols = st.columns(3)
+        with train_cols[0]:
+            _ds_names = [ds["project_name"] for ds in _datasets]
+            _sel_dataset = st.selectbox("Dataset", _ds_names)
+        with train_cols[1]:
+            _base_model = st.selectbox("Base model", ["rfdetr_base", "rfdetr_large"], index=0)
+        with train_cols[2]:
+            _epochs = st.number_input("Epochs", 10, 500, 50, 10)
+
+        adv_cols = st.columns(3)
+        with adv_cols[0]:
+            _batch = st.number_input("Batch size", 1, 32, 4)
+        with adv_cols[1]:
+            _grad_accum = st.number_input("Grad accumulation", 1, 16, 4)
+        with adv_cols[2]:
+            _lr = st.number_input("Learning rate", 1e-6, 1e-2, 1e-4, format="%.1e")
+
+        _early_stop = st.checkbox("Early stopping", value=True)
+
+        if st.button("🚀 Start Training", type="primary", disabled=not _deps_ok):
+            _ds_path = get_dataset_dir(_sel_dataset)
+            _out_dir = os.path.join("output", "training", _sel_dataset)
+
+            status = st.status("Training RF-DETR...", expanded=True)
+            with status:
+                st.write(f"Dataset: **{_sel_dataset}**")
+                st.write(f"Base model: **{_base_model}** | Epochs: **{_epochs}** | Batch: **{_batch}×{_grad_accum}**")
+
+                result = train_rfdetr(
+                    dataset_dir=_ds_path,
+                    output_dir=_out_dir,
+                    base_model=_base_model,
+                    epochs=_epochs,
+                    batch_size=_batch,
+                    grad_accum_steps=_grad_accum,
+                    lr=_lr,
+                    early_stopping=_early_stop,
+                )
+
+                if result.get("error"):
+                    st.error(f"Training failed: {result['error']}")
+                    status.update(label="Training failed", state="error")
+                else:
+                    st.write(f"✅ Checkpoint saved: `{result['checkpoint_path']}`")
+                    if result.get("best_map50"):
+                        st.write(f"Best mAP@50: **{result['best_map50']:.3f}**")
+                    st.write(f"Elapsed: {result['elapsed_seconds']:.0f}s")
+
+                    # Auto-register
+                    _ds_meta = load_dataset_metadata(_sel_dataset)
+                    _cls_names = _ds_meta.get("class_names", []) if _ds_meta else []
+                    register_custom_model(
+                        name=_sel_dataset,
+                        checkpoint_path=result["checkpoint_path"],
+                        class_names=_cls_names,
+                        base_model=_base_model,
+                        gsd_cm=_ds_meta.get("gsd_cm", 0) if _ds_meta else 0,
+                    )
+                    st.success(f"Model **{_sel_dataset}** registered! It now appears in the detection dropdown.")
+                    status.update(label="Training complete!", state="complete")
+
+    # =====================================================================
+    # Step 4: Manage Custom Models
+    # =====================================================================
+
+    st.header("Step 3: Custom Models")
+
+    _custom = load_custom_models()
+    if _custom:
+        for name, info in _custom.items():
+            with st.expander(f"🎓 **{name}** — {info.get('description', '')}"):
+                st.caption(f"Checkpoint: `{info.get('checkpoint_path', 'unknown')}`")
+                st.caption(f"Base: {info.get('base_model', 'unknown')} | Classes: {', '.join(info.get('class_names', []))}")
+                st.caption(f"GSD: {info.get('gsd_cm', 0):.1f} cm/px")
+                st.info("This model appears in the Main tab → Object Detection dropdown.")
+    else:
+        st.info("No custom models yet. Train one above and it will appear here.")
+
+    # ── Footer ──────────────────────────────────────────────────────────
+
+    st.markdown("---")
+    st.markdown("Powered by SAM3, RF-DETR, DINOv3, and OpenAI Vision. Built by Edwin Kestler.")

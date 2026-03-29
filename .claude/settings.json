@@ -22,7 +22,22 @@
       "WebFetch(domain:www.analyticsvidhya.com)",
       "WebFetch(domain:arxiv.org)",
       "WebFetch(domain:www.digitalocean.com)",
-      "WebFetch(domain:learnopencv.com)"
+      "WebFetch(domain:learnopencv.com)",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''pipeline/rfdetector.py'', doraise=True\\); print\\(''rfdetector.py OK''\\)\")",
+      "Bash(source .venv/bin/activate)",
+      "Bash(pip install:*)",
+      "Bash(python3 -c \"from pipeline.rfdetector import is_available, available_models; print\\(''RF-DETR available:'', is_available\\(\\)\\); print\\(''Models:'', list\\(available_models\\(\\).keys\\(\\)\\)\\)\")",
+      "Bash(python3 -c \"from rfdetr.util.coco_classes import COCO_CLASSES; print\\(f''{len\\(COCO_CLASSES\\)} classes''\\); print\\([c for c in COCO_CLASSES if c in {''car'',''truck'',''bus'',''boat'',''airplane'',''person''}]\\)\")",
+      "Bash(python3 -c \"from rfdetr.assets.coco_classes import COCO_CLASSES; print\\(COCO_CLASSES[:20]\\); print\\(''---''\\); print\\([i for i,c in enumerate\\(COCO_CLASSES\\) if ''car'' in c.lower\\(\\) or ''truck'' in c.lower\\(\\) or ''boat'' in c.lower\\(\\) or ''plane'' in c.lower\\(\\) or ''bus'' in c.lower\\(\\) or ''person'' in c.lower\\(\\)]\\)\")",
+      "Bash(python3 -c \"from rfdetr.assets.coco_classes import COCO_CLASSES; print\\(type\\(COCO_CLASSES\\)\\); print\\(list\\(COCO_CLASSES.items\\(\\)\\)[:10] if isinstance\\(COCO_CLASSES, dict\\) else COCO_CLASSES[:10]\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''pipeline/rfdetector.py'', doraise=True\\); py_compile.compile\\(''app.py'', doraise=True\\); print\\(''All OK''\\)\")",
+      "Bash(python3 -c \":*)",
+      "Bash(wget -q --show-progress \"https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth\" -O rf-detr-base.pth)",
+      "Bash(ls -lh /home/kestl/github/app_llmsat/checkpoints/rf-detr-*.pth)",
+      "Bash(wget -q --show-progress \"https://storage.googleapis.com/rfdetr/rf-detr-large.pth\" -O rf-detr-large.pth)",
+      "Bash(source /home/kestl/github/app_llmsat/.venv/bin/activate)",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''pipeline/rfdetector.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(wget -q --show-progress \"https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth\" -O rf-detr-large-2026.pth)"
     ]
   }
 }

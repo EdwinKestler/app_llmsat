@@ -1,0 +1,49 @@
+{
+  "images": [
+    {
+      "id": 4,
+      "file_name": "tile_0003.png",
+      "width": 640,
+      "height": 640
+    },
+    {
+      "id": 7,
+      "file_name": "tile_0006.png",
+      "width": 640,
+      "height": 640
+    }
+  ],
+  "annotations": [
+    {
+      "id": 618,
+      "image_id": 4,
+      "category_id": 1,
+      "bbox": [
+        528.0,
+        289.0,
+        12.0,
+        15.0
+      ],
+      "area": 180.0,
+      "iscrowd": 0
+    }
+  ],
+  "categories": [
+    {
+      "id": 1,
+      "name": "building"
+    },
+    {
+      "id": 2,
+      "name": "road"
+    },
+    {
+      "id": 3,
+      "name": "tree"
+    },
+    {
+      "id": 4,
+      "name": "water"
+    }
+  ]
+}

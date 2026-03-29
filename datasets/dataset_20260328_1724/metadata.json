@@ -1,0 +1,22 @@
+{
+  "project_name": "dataset_20260328_1724",
+  "created": "2026-03-29T00:16:19.069806+00:00",
+  "class_names": [
+    "building",
+    "road",
+    "tree",
+    "water"
+  ],
+  "gsd_cm": 58.704806804249934,
+  "source_bbox": [
+    -91.166611,
+    14.736038,
+    -91.158028,
+    14.744671
+  ],
+  "n_tiles": 9,
+  "n_train": 7,
+  "n_val": 2,
+  "n_annotations_train": 1674,
+  "n_annotations_val": 1
+}
